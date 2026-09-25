@@ -684,7 +684,7 @@ export class RemoteServer extends ClientListener {
     }
 
     // ia-forge : trace des animations d'assise reçues (voir sync/animation.ts, animTrace).
-    if (msg.data && /chair|stool|bench|sit|throne/i.test(msg.data.animEventName)) {
+    if (msg.data && /chair|stool|bench|sit|throne|attack/i.test(msg.data.animEventName)) {
       animTrace({ ev: "recv", idx: msg.idx, anim: msg.data.animEventName, n: msg.data.numChanges });
     }
     form.animation = msg.data;

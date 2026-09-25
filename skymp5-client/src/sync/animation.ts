@@ -34,13 +34,15 @@ export interface AnimationApplyState {
 const SIT_TRACE = /chair|stool|bench|sit|throne/i;
 // Signature de version du client maison (lue par le gamemode : quel client tourne chez chaque joueur).
 try {
-  storage["gmClientBuild"] = "ia-forge-local-4";
+  storage["gmClientBuild"] = "ia-forge-local-9";
 } catch (e) {
   // storage indisponible
 }
 export const animTrace = (ev: Record<string, unknown>): void => {
   try {
-    const t = (storage["gmAnimTrace"] as Array<unknown> | undefined) ?? [];
+    // Clé absente : le storage de SP renvoie une fonction « piège », pas undefined (storageProxy.js).
+    const cur = storage["gmAnimTrace"];
+    const t = Array.isArray(cur) ? (cur as Array<unknown>) : [];
     t.push({ at: Date.now(), ...ev });
     if (t.length > 50) t.splice(0, t.length - 50);
     storage["gmAnimTrace"] = t;
@@ -50,9 +52,19 @@ export const animTrace = (ev: Record<string, unknown>): void => {
 };
 const sitRetries = new Set<string>();
 
-const allowedIdles = new Array<[number, string]>();
+// ia-forge (2026-09-25) : le moteur passe DEUX fois par le hook sendAnimationEvent pour un seul
+// Debug.sendAnimationEvent (traces « allowed-sit » en double, liste déjà vide au 2e passage). L'autorisation
+// « une seule fois » d'origine (retirée au 1er passage) bloquait donc le 2e, et l'assise comme les attaques des
+// autres joueurs n'étaient jamais jouées. Les autorisations valent maintenant une courte fenêtre de temps.
+const ALLOW_WINDOW_MS = 300;
+const allowedIdles = new Array<[number, string, number]>();
 const refsWithDefaultAnimsDisabled = new Set<number>();
-const allowedAnims = new Set<string>();
+const allowedAnims = new Map<string, number>();
+const allowedIdle = (selfId: number, name: string): boolean => {
+  const now = Date.now();
+  for (let i = allowedIdles.length - 1; i >= 0; i--) if (allowedIdles[i][2] < now) allowedIdles.splice(i, 1);
+  return allowedIdles.some((p) => p[0] === selfId && p[1] === name);
+};
 
 const actorSitAnimsLowerCase = [
   'idlestoolenterplayer',
@@ -163,7 +175,7 @@ export const applyAnimation = (
   const animEventNameLowerCase = anim.animEventName.toLowerCase();
 
   if (isIdle(anim.animEventName)) {
-    allowedIdles.push([refr.getFormID(), anim.animEventName]);
+    allowedIdles.push([refr.getFormID(), anim.animEventName, Date.now() + ALLOW_WINDOW_MS]);
   }
 
   const ac = Actor.from(refr);
@@ -197,7 +209,7 @@ export const applyAnimation = (
 
   if (refsWithDefaultAnimsDisabled.has(refr.getFormID())) {
     if (animEventNameLowerCase.includes("attack")) {
-      allowedAnims.add(refr.getFormID() + ":" + anim.animEventName);
+      allowedAnims.set(refr.getFormID() + ":" + anim.animEventName, Date.now() + ALLOW_WINDOW_MS);
     }
   }
 
@@ -341,9 +353,11 @@ export const setupHooks = (): void => {
       if (refsWithDefaultAnimsDisabled.has(ctx.selfId)) {
         if (ctx.animEventName.toLowerCase().includes("attack")) {
           const animKey = ctx.selfId + ":" + ctx.animEventName;
-          if (allowedAnims.has(animKey)) {
-            allowedAnims.delete(animKey);
+          const until = allowedAnims.get(animKey);
+          if (until !== undefined && until >= Date.now()) {
+            animTrace({ ev: "allowed-attack", refr: ctx.selfId.toString(16), anim: ctx.animEventName });
           } else {
+            animTrace({ ev: "blocked-attack", refr: ctx.selfId.toString(16), anim: ctx.animEventName });
             printConsole("block anim " + ctx.animEventName);
             return (ctx.animEventName = "");
           }
@@ -360,14 +374,11 @@ export const setupHooks = (): void => {
         return;
       }
       if (isIdle(ctx.animEventName)) {
-        const i = allowedIdles.findIndex((pair) => {
-          return pair[0] === ctx.selfId && pair[1] === ctx.animEventName;
-        });
-        if (i === -1) {
+        if (allowedIdle(ctx.selfId, ctx.animEventName)) {
+          if (SIT_TRACE.test(ctx.animEventName)) animTrace({ ev: "allowed-sit", refr: ctx.selfId.toString(16), anim: ctx.animEventName });
+        } else {
           if (SIT_TRACE.test(ctx.animEventName)) animTrace({ ev: "blocked", refr: ctx.selfId.toString(16), anim: ctx.animEventName });
           ctx.animEventName = "";
-        } else {
-          allowedIdles.splice(i, 1);
         }
       }
     },
@@ -384,7 +395,7 @@ export const setupHooks = (): void => {
         const fallback = lower.includes("stool") ? "IdleStoolEnterInstant" : lower.includes("jarl") ? "IdleJarlChairEnterInstant" : "IdleChairEnterInstant";
         const refr = ObjectReference.from(Game.getFormEx(ctx.selfId));
         if (refr) {
-          allowedIdles.push([ctx.selfId, fallback]);
+          allowedIdles.push([ctx.selfId, fallback, Date.now() + ALLOW_WINDOW_MS]);
           Debug.sendAnimationEvent(refr, fallback);
           setCollision(ctx.selfId, false);
           animTrace({ ev: "fallback", refr: ctx.selfId.toString(16), anim: fallback });
