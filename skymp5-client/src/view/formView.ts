@@ -12,6 +12,7 @@ import { getMovement } from "../sync/movementGet";
 import { lastTryHost, tryHost } from "./hostAttempts";
 import { ModelApplyUtils } from "./modelApplyUtils";
 import { localIdToRemoteId } from "./worldViewMisc";
+import { gmDebugOn, gmTrace } from "../debugTrace";
 import { SpApiInteractor } from "../services/spApiInteractor";
 import { WorldCleanerService } from "../services/services/worldCleanerService";
 import { GamemodeUpdateService } from "../services/services/gamemodeUpdateService";
@@ -401,6 +402,34 @@ export class FormView {
       Actor.from(refr)?.clearKeepOffsetFromActor();
     }
 
+    // ia-forge : trace de chaque perso distant toutes les 2 s (mode débogage, catégorie « pnj ») pour comprendre les
+    // PNJ « figés » vus par un joueur quand un autre les héberge (essai S1 à deux, 2026-09-25) : drapeau
+    // isHostedByOther, hébergé par moi, mouvements reçus / appliqués, position voulue / réelle, combat.
+    if (gmDebugOn("pnj") && Date.now() - this.pnjTraceAt > 2000) {
+      this.pnjTraceAt = Date.now();
+      try {
+        const a = Actor.from(refr);
+        const p = ObjectReferenceEx.getPos(refr);
+        const want = model.movement ? model.movement.pos : null;
+        gmTrace("pnj", `${(this.remoteRefrId ?? 0).toString(16)} ${alreadyHosted ? "hébergé par moi" : model.isHostedByOther ? "hébergé par un autre" : "SANS HÔTE CONNU"}`, {
+          srv: (this.remoteRefrId ?? 0).toString(16),
+          refr: this.refrId.toString(16),
+          hostedByOther: !!model.isHostedByOther,
+          hostedByMe: alreadyHosted,
+          recu: +(model.numMovementChanges as number) || 0,
+          applique: this.movState.lastNumChanges,
+          ilYa: this.movState.lastApply ? Date.now() - this.movState.lastApply : -1,
+          voulu: want ? want.map(Math.round) : null,
+          reel: p.map(Math.round),
+          ecart: want ? Math.round(ObjectReferenceEx.getDistance(p, want)) : -1,
+          combat: a ? a.isInCombat() : null,
+          mort: a ? a.isDead() : null,
+        });
+      } catch (e) {
+        gmTrace("erreur", `trace pnj : ${e}`);
+      }
+    }
+
     if (model.movement) {
       let ac = Actor.from(refr);
       if (
@@ -671,6 +700,7 @@ export class FormView {
   }
 
   private refrId = 0;
+  private pnjTraceAt = 0;
   private ready = false;
   private animState = this.getDefaultAnimState();
   private movState = {
