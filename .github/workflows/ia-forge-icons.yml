@@ -33,6 +33,14 @@ jobs:
           path: ${{ github.workspace }}\vcpkg-cache
           key: ia-forge-icons-vcpkg-${{ hashFiles('ia-forge-icons/vcpkg.json') }}
           restore-keys: ia-forge-icons-vcpkg-
+      # CommonLibSSE (FetchContent) est recompilé en entier sans ce cache (~13 min) : on garde le dossier build,
+      # MSBuild ne recompile ensuite que nos fichiers. Clé = CMakeLists (commit de CommonLib) + vcpkg.json.
+      - name: Cache build (CommonLibSSE compilé)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\build
+          key: ia-forge-icons-build-${{ hashFiles('ia-forge-icons/CMakeLists.txt', 'ia-forge-icons/vcpkg.json') }}-${{ github.run_number }}
+          restore-keys: ia-forge-icons-build-${{ hashFiles('ia-forge-icons/CMakeLists.txt', 'ia-forge-icons/vcpkg.json') }}-
       - name: Configure and build
         id: build
         shell: pwsh

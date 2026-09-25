@@ -37,7 +37,7 @@ SKSEPluginInfo(
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
     InitializeLog();
-    logger::info("IaForgeIcons 0.2.0, compilé le " __DATE__ " " __TIME__);
+    logger::info("IaForgeIcons 0.3.0, compilé le " __DATE__ " " __TIME__);
     SKSE::Init(a_skse);
     SKSE::GetMessagingInterface()->RegisterListener(MessageHandler);
     return true;

@@ -22,6 +22,10 @@ namespace IaForge
         constexpr std::size_t kSceneMax = 5;
         // Images où le modèle doit être prêt avant la capture (le moteur repose la rotation à l'arrivée).
         constexpr int kSettleFrames = 3;
+        // Durée maximale d'un passage (jeu en pause) : au-delà, on referme quoi qu'il arrive.
+        constexpr auto kSessionMax = std::chrono::seconds(12);
+        // Fermeture différée de la scène : images de jeu avant de la forcer si seule la tâche de chargement traîne (Grid : 300).
+        constexpr int kTeardownTries = 300;
 
         template <class T>
         void Release(void*& a_p)
@@ -102,6 +106,7 @@ namespace IaForge
             Notify();
             return;
         }
+        m_stalls = 0;
         if (!m_menuWanted) {
             m_menuWanted = true;
             RequestMenu(true);
@@ -125,33 +130,52 @@ namespace IaForge
             logger::error("Inventory3DManager absent");
             return;
         }
-        mgr->Begin3D(RE::INTERFACE_LIGHT_SCHEME::kInventory);
+        // Grid Inventory (GI73) : une scène dont la fermeture a été différée est encore debout ; on la reprend au lieu
+        // d'en empiler une seconde (Begin3D et End3D doivent rester appariés).
+        if (m_scene3D) {
+            logger::warn("[scène] la précédente est encore ouverte (fermeture différée) : reprise");
+        } else {
+            mgr->Begin3D(RE::INTERFACE_LIGHT_SCHEME::kInventory);
+            m_scene3D = true;
+        }
+        ++m_session;
         m_running = true;
         m_hideRequested = false;
         m_sessionCount = 0;
         m_needReset = false;
+        m_openedAt = std::chrono::steady_clock::now();
         logger::info("scène 3D ouverte, {} objet(s) en file (au plus {} par passage), itemPos ({:.1f} {:.1f} {:.1f})", m_queue.size(), kPerSession,
             mgr->itemPos.x, mgr->itemPos.y, mgr->itemPos.z);
     }
 
     void Capturer::End()
     {
-        if (m_running) {
-            if (auto* mgr = RE::Inventory3DManager::GetSingleton()) {
-                mgr->UnloadInventoryItem();
-                mgr->End3D();
-            }
-        }
+        const bool wasRunning = m_running;
         if (m_current) {
-            // Menu fermé en pleine capture : l'objet reste en file pour la prochaine fois.
-            m_queued.erase(m_currentId);
+            // Menu fermé en pleine capture : l'objet repasse une fois au prochain passage.
+            if (m_retried.insert(m_currentId).second) {
+                m_queue.push_back(m_currentId);
+            } else {
+                m_queued.erase(m_currentId);
+                ++m_failed;
+            }
             m_current = nullptr;
+            m_currentId = 0;
+            m_currentModel.clear();
         }
         m_running = false;
+        // Jamais End3D pendant un chargement (plantage du moteur) : on attend qu'il finisse, jeu relancé.
+        if (wasRunning) TeardownWhenIdle(m_session, 0);
         m_menuWanted = false;
         ReleaseTextures();
         Notify();
         logger::info("scène 3D fermée : {} capturée(s), {} ratée(s) depuis le lancement ; {} objet(s) encore en file", m_captured, m_failed, m_queue.size());
+        // Passage sans aucun objet pris (scène occupée) : au bout de trois, on ne rouvre plus jusqu'à la prochaine demande.
+        m_stalls = m_sessionCount ? 0 : m_stalls + 1;
+        if (m_stalls >= 3) {
+            logger::warn("[passage] {} passages de suite sans progrès : on attend la prochaine demande du sac", m_stalls);
+            return;
+        }
         // Encore des objets : prochain passage dans 4 s (le jeu reprend entre deux passages).
         if (!m_queue.empty()) {
             m_menuWanted = true;
@@ -163,6 +187,48 @@ namespace IaForge
                 });
             }).detach();
         }
+    }
+
+    // Grid Inventory, ItemPreview::TeardownWhenIdle : End3D seulement quand plus rien ne se charge ; sinon on réessaie
+    // à l'image suivante (le jeu tourne de nouveau). Un passage rouvert entre-temps reprend la scène (m_session change)
+    // et fermera la paire lui-même.
+    void Capturer::TeardownWhenIdle(std::uint32_t a_session, int a_tries)
+    {
+        if (a_session != m_session || m_running || !m_scene3D) return;
+        auto* mgr = RE::Inventory3DManager::GetSingleton();
+        if (!mgr) return;
+        if (LoadInFlight()) {
+            if (a_tries == 0) LogScene("fermeture différée");
+            // Une scène laissée ouverte, jeu relancé, cache le monde (Grid, GI73). Au bout de kTeardownTries images :
+            // si seule la tâche de chargement traîne (liste sans entrée à moitié construite), on ferme quand même, comme
+            // la v0.1 le faisait sans planter ; une entrée sans géométrie, elle, ferait planter End3D (Grid) : on attend.
+            if (a_tries >= kTeardownTries && !SceneHalfBuilt()) {
+                LogScene("fermeture forcée");
+                logger::warn("[scène] chargement toujours en cours après {} images de jeu : fermeture forcée", a_tries);
+            } else {
+                if (a_tries > 0 && a_tries % kTeardownTries == 0) LogScene("fermeture toujours différée");
+                SKSE::GetTaskInterface()->AddTask([this, a_session, a_tries]() { TeardownWhenIdle(a_session, a_tries + 1); });
+                return;
+            }
+        }
+        mgr->UnloadInventoryItem();
+        if (SceneHalfBuilt()) {
+            SKSE::GetTaskInterface()->AddTask([this, a_session, a_tries]() { TeardownWhenIdle(a_session, a_tries + 1); });
+            return;
+        }
+        mgr->End3D();
+        m_scene3D = false;
+        logger::info("[scène] fermée (End3D) après {} image(s) d'attente", a_tries);
+    }
+
+    // Referme le passage (le menu, donc la pause). Jamais bloqué par un chargement : la scène se ferme plus tard.
+    void Capturer::Close(const char* a_why)
+    {
+        if (m_hideRequested) return;
+        m_hideRequested = true;
+        logger::info("[passage] fin : {}", a_why);
+        Notify();
+        RequestMenu(false);
     }
 
     RE::NiAVObject* Capturer::FindModel() const
@@ -194,6 +260,17 @@ namespace IaForge
         return nullptr;
     }
 
+    // Une entrée de la liste sans modèle ou sans géométrie : End3D la lirait et planterait (Grid Inventory).
+    bool Capturer::SceneHalfBuilt() const
+    {
+        auto* mgr = RE::Inventory3DManager::GetSingleton();
+        if (!mgr) return false;
+        for (auto& lm : mgr->GetRuntimeData().loadedModels) {
+            if (!lm.spModel || lm.spModel->worldBound.radius <= 0.0f) return true;
+        }
+        return false;
+    }
+
     bool Capturer::LoadInFlight() const
     {
         auto* mgr = RE::Inventory3DManager::GetSingleton();
@@ -212,6 +289,11 @@ namespace IaForge
         auto* mgr = RE::Inventory3DManager::GetSingleton();
         if (!mgr || LoadInFlight()) return false;
         mgr->UnloadInventoryItem();
+        // Grid Inventory : redemander APRÈS le déchargement, End3D parcourt la liste qu'il vient de toucher.
+        if (LoadInFlight()) {
+            logger::warn("[scène] un chargement est arrivé pendant le vidage : End3D évité");
+            return false;
+        }
         mgr->End3D();
         mgr->Begin3D(RE::INTERFACE_LIGHT_SCHEME::kInventory);
         logger::info("[scène] vidée et rouverte");
@@ -239,15 +321,20 @@ namespace IaForge
     {
         logger::warn("{:08X} ({}) : {}, abandon", m_currentId, m_currentModel, a_why);
         LogScene("abandon");
-        ++m_failed;
+        if (m_retried.count(m_currentId)) ++m_failed;
         // Ne jamais décharger en plein chargement (Grid Inventory) : on videra la scène quand il sera fini.
         if (FindModel()) {
             if (auto* mgr = RE::Inventory3DManager::GetSingleton()) mgr->UnloadInventoryItem();
         } else {
             m_needReset = true;
-            m_resetWait = 0;
         }
-        m_queued.erase(m_currentId);
+        // Seconde chance au passage suivant (le modèle a pu finir de se charger, jeu relancé, entre-temps).
+        if (m_retried.insert(m_currentId).second) {
+            m_queue.push_back(m_currentId);
+            logger::info("{:08X} : réessayé au prochain passage", m_currentId);
+        } else {
+            m_queued.erase(m_currentId);
+        }
         m_current = nullptr;
         m_currentId = 0;
         m_currentModel.clear();
@@ -255,23 +342,31 @@ namespace IaForge
 
     void Capturer::Advance()
     {
-        if (!m_running) return;
+        if (!m_running || m_hideRequested) return;
         auto* mgr = RE::Inventory3DManager::GetSingleton();
         if (!mgr) return;
+        // Garde-fou : le jeu est en pause pendant le passage, il ne doit jamais y rester.
+        if (std::chrono::steady_clock::now() - m_openedAt > kSessionMax) {
+            if (m_current) GiveUp("passage trop long");
+            Close("durée maximale atteinte");
+            return;
+        }
         if (m_current) {
             ++m_frames;
             if (m_frames == 1 || m_frames % 30 == 0) LogScene("attente");
-            if (m_frames > kTimeoutFrames) GiveUp("modèle jamais arrivé");
+            if (m_frames > kTimeoutFrames) {
+                GiveUp("modèle jamais arrivé");
+                // Un chargement bloqué ne se débloque pas en pause : on rend la main au jeu, la scène sera vidée
+                // quand il aura fini, et le passage suivant reprendra.
+                if (LoadInFlight()) Close("chargement bloqué, on relance le jeu");
+            }
             return;
         }
-        // Scène à vider après un abandon : on attend la fin du chargement en cours (borné à ~5 s).
+        // Scène à vider après un abandon : sinon on referme (le vidage se fera à la fermeture).
         if (m_needReset) {
-            if (ResetScene()) {
-                m_needReset = false;
-            } else if (++m_resetWait > 300) {
-                logger::warn("[scène] chargement jamais terminé : on continue sans vider");
-                m_needReset = false;
-            } else {
+            m_needReset = false;
+            if (!ResetScene()) {
+                Close("scène occupée par un chargement");
                 return;
             }
         }
@@ -290,6 +385,7 @@ namespace IaForge
             // Scène trop pleine : on la vide avant (Grid Inventory, ItemPreview::Request).
             if (mgr->GetRuntimeData().loadedModels.size() >= kSceneMax && !ResetScene()) {
                 m_queue.push_front(id);
+                Close("scène pleine et occupée par un chargement");
                 return;
             }
             // Position de l'objet dans la scène : jamais initialisée si l'inventaire du jeu n'a pas été ouvert (il est
@@ -310,12 +406,8 @@ namespace IaForge
             logger::info("{:08X} « {} » : chargement de {}", id, obj->GetName(), path);
             return;
         }
-        // File vide ou plafond atteint : on referme, jamais pendant un chargement (End3D ferait planter le jeu).
-        if (!m_hideRequested && !LoadInFlight()) {
-            m_hideRequested = true;
-            Notify();
-            RequestMenu(false);
-        }
+        // File vide ou plafond atteint : on referme (la scène se ferme plus tard si un chargement traîne).
+        Close(m_queue.empty() ? "file vide" : "plafond du passage atteint");
     }
 
     void Capturer::Render()
@@ -327,7 +419,7 @@ namespace IaForge
             return;
         }
         if (++m_readyFrames < kSettleFrames) return;
-        if (m_readyFrames == kSettleFrames) LogScene("prêt");
+        if (m_readyFrames == kSettleFrames) LogScene(fmt::format("prêt après {} image(s)", m_frames).c_str());
         const bool ok = CaptureModel(model);
         if (ok) ++m_captured; else ++m_failed;
         Finish(ok);
@@ -596,9 +688,16 @@ namespace IaForge
     {
         using Flags = RE::UI_MENU_FLAGS;
         auto* menu = new IconMenu();
-        // La scène 3D d'inventaire ne se dessine que jeu en pause (Grid Inventory, GridMenu.cpp) ; pas d'interface.
-        menu->menuFlags.set(Flags::kPausesGame, Flags::kCustomRendering, Flags::kDisablePauseMenu);
-        menu->depthPriority = 0;
+        // Drapeaux recopiés à l'identique de Grid Inventory et Modex (GridMenu::Creator, ModexGUIMenu::Creator), dont
+        // les chargements de modèles aboutissent. La v0.2 n'avait que kPausesGame | kCustomRendering |
+        // kDisablePauseMenu et aucun chargement disque ne finissait (seuls les modèles déjà en mémoire arrivaient) ;
+        // hypothèse à vérifier dans le journal v0.3 : il manquait kUsesMenuContext (le « mode menu » du moteur).
+        menu->menuFlags.set(Flags::kUpdateUsesCursor, Flags::kUsesCursor);
+        menu->menuFlags.set(Flags::kCustomRendering);
+        menu->menuFlags.set(Flags::kUsesMenuContext);
+        menu->menuFlags.set(Flags::kAllowSaving);
+        menu->menuFlags.set(Flags::kPausesGame, Flags::kDisablePauseMenu);
+        menu->depthPriority = 11;
         return menu;
     }
 

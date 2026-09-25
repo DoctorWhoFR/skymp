@@ -42,7 +42,10 @@ namespace IaForge
 
         RE::NiAVObject* FindModel() const;
         bool LoadInFlight() const;
+        bool SceneHalfBuilt() const;
         bool ResetScene();
+        void TeardownWhenIdle(std::uint32_t a_session, int a_tries);
+        void Close(const char* a_why);
         void LogScene(const char* a_why) const;
         void GiveUp(const char* a_why);
         bool CaptureModel(RE::NiAVObject* a_model);
@@ -61,12 +64,18 @@ namespace IaForge
         int m_readyFrames = 0;
         int m_sessionCount = 0;    // objets pris depuis l'ouverture du menu (plafond : kPerSession)
         bool m_needReset = false;  // un chargement a été abandonné : vider la scène dès qu'aucun n'est en cours
-        int m_resetWait = 0;
         std::string m_currentModel;  // chemin du .nif de l'objet en cours (modèles partagés)
         std::uint32_t m_captured = 0, m_failed = 0;
         bool m_running = false;
         bool m_menuWanted = false;
         bool m_hideRequested = false;
+        // Scène 3D ouverte (Begin3D sans End3D) : la fermeture est différée tant qu'un chargement est en cours (Grid
+        // Inventory, GI73 / TeardownWhenIdle) ; une réouverture reprend la scène encore debout.
+        bool m_scene3D = false;
+        std::uint32_t m_session = 0;
+        int m_stalls = 0;  // passages de suite sans aucun objet pris
+        std::chrono::steady_clock::time_point m_openedAt{};
+        std::unordered_set<RE::FormID> m_retried;  // objets déjà remis une fois en file après un abandon
 
         // Textures de travail (même format que l'image du jeu).
         std::uint32_t m_format = 0;
