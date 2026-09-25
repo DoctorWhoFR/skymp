@@ -180,7 +180,8 @@ export class FormView {
               appearance,
               spawnPosition,
               spawningRefr.getFormID(),
-              callback
+              callback,
+              model.movement ? model.movement.worldOrCell : 0
             );
           }
         };

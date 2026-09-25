@@ -1,4 +1,6 @@
 #include "MovementValidation.h"
+#include <cmath>
+#include <spdlog/spdlog.h>
 #include "FormDesc.h"
 #include "NiPoint3.h"
 #include "PartOne.h"
@@ -29,8 +31,19 @@ bool Validate(PartOne& partOne, const NiPoint3& currentPos,
       msg.rot = { currentRot[0], currentRot[1], currentRot[2] };
       msg.worldOrCell = currentCellOrWorld.ToFormId(espmFiles);
       sendTarget.Send(userId, msg, true);
+      return false;
     }
-    return false;
+
+    // ia-forge (2026-09-25) : pour un PNJ, l'expéditeur est son hôte (vérifié par SendToNeighbours) et le
+    // serveur ne simule rien lui-même : rejeter en silence figeait le PNJ côté serveur pour toujours (position
+    // obsolète → PNJ diffusé/retiré au centimètre près, « il se téléporte sur moi », OnHit « too distant »).
+    // On fait confiance à l'hôte et on journalise le saut pour comprendre d'où il vient.
+    const float dist = std::sqrt((currentPos - newPos).SqrLength());
+    spdlog::warn("MovementValidation - NPC {:x} hosted by user {}: jump of {:.0f} units ({:.0f} m), cell change {} ({} -> {}), accepted (ia-forge: trust hoster)",
+                 actor ? actor->GetFormId() : 0, userId, dist, dist / 70.f,
+                 currentCellOrWorld != newCellOrWorld ? "yes" : "no",
+                 currentCellOrWorld.ToString(), newCellOrWorld.ToString());
+    return true;
   }
   return true;
 }

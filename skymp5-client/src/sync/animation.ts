@@ -34,7 +34,7 @@ export interface AnimationApplyState {
 const SIT_TRACE = /chair|stool|bench|sit|throne/i;
 // Signature de version du client maison (lue par le gamemode : quel client tourne chez chaque joueur).
 try {
-  storage["gmClientBuild"] = "ia-forge-local-9";
+  storage["gmClientBuild"] = "ia-forge-local-10";
 } catch (e) {
   // storage indisponible
 }
