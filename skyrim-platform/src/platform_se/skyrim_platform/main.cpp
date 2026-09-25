@@ -306,8 +306,15 @@ public:
 
   void OnKeyStateChange(uint8_t code, bool down) noexcept override
   {
-    if (!IsBrowserFocused())
+    if (!IsBrowserFocused()) {
+      // ia-forge : une touche enfoncée avec le focus puis relâchée sans lui restait « enfoncée » ici,
+      // et OnUpdate répétait son caractère à chaque image (touches collées, BUG-037). On l'oublie.
+      int vk = VscToVk(code);
+      if (!down && vk >= 0 && vk < static_cast<int>(vkCodeDownDur.size())) {
+        vkCodeDownDur[vk] = 0;
+      }
       return;
+    }
 
     // Switch layout if need
     bool switchLayoutDown = ((GetAsyncKeyState(VK_SHIFT) & 0x8000) &&
@@ -401,7 +408,8 @@ public:
       app->RunTasks();
 
     // Repeat the character until the key isn't released
-    for (int i = 0; i < 256; ++i) {
+    // ia-forge : jamais de répétition vers un navigateur qui n'a pas le focus (BUG-037).
+    for (int i = 0; IsBrowserFocused() && i < 256; ++i) {
       const auto pressMoment = this->vkCodeDownDur[i];
       if (pressMoment && clock() - pressMoment > CLOCKS_PER_SEC / 2) {
         if (i == VK_BACK || i == VK_RIGHT || i == VK_LEFT) {

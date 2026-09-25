@@ -751,6 +751,13 @@ export class RemoteServer extends ClientListener {
     }
     const i = this.getIdManager().getId(msg.idx);
     const form = this.worldModel.forms[i];
+    // ia-forge : la mise à jour peut arriver avant la création de la forme (juste après une
+    // téléportation, « Reset all form views ») → exception « Cannot set properties of undefined ».
+    // La création apportera de toute façon les propriétés à jour.
+    if (!form) {
+      logTrace(this, `UpdateProperty: form not found for idx`, msg.idx, msg.propName);
+      return;
+    }
     (form as Record<string, unknown>)[msg.propName] = msgData;
   }
 
