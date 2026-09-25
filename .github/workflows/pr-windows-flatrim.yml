@@ -47,21 +47,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      # Même version que upload-artifact (v7) ; « dist » contient déjà skymp5-client.js (déposé avant le renommage).
+      - uses: actions/download-artifact@v7
         with:
           name: dist
           path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          name: Flatrim_skymp5-client.js
-          path: client-js
       - name: Assemble client
         run: |
           set -e
-          ls -R client-js | head
-          js=$(find client-js -name '*skymp5-client.js' | head -1)
-          cp "$js" dist/client/Data/Platform/Plugins/skymp5-client.js
-          rm -f dist/client/Data/Platform/Plugins/Flatrim_skymp5-client.js
+          test -f dist/client/Data/Platform/Plugins/skymp5-client.js
           (cd dist/client && zip -qr "$GITHUB_WORKSPACE/skymp-client.zip" .)
           sha1sum skymp-client.zip | tee skymp-client.zip.sha1
           ls -la dist/client/Data/Platform/Plugins || true
