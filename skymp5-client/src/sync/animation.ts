@@ -29,6 +29,21 @@ export interface AnimationApplyState {
   useAnimOverrides: boolean;
 }
 
+// ia-forge : trace des animations « d'assise » des persos distants (lue par le script _gmAnimDiag du
+// gamemode via storage["gmAnimTrace"]) pour comprendre pourquoi s'asseoir n'était pas vu (2026-09-25).
+const SIT_TRACE = /chair|stool|bench|sit|throne/i;
+export const animTrace = (ev: Record<string, unknown>): void => {
+  try {
+    const t = (storage["gmAnimTrace"] as Array<unknown> | undefined) ?? [];
+    t.push({ at: Date.now(), ...ev });
+    if (t.length > 50) t.splice(0, t.length - 50);
+    storage["gmAnimTrace"] = t;
+  } catch (e) {
+    // trace indisponible
+  }
+};
+const sitRetries = new Set<string>();
+
 const allowedIdles = new Array<[number, string]>();
 const refsWithDefaultAnimsDisabled = new Set<number>();
 const allowedAnims = new Set<string>();
@@ -124,6 +139,9 @@ export const applyAnimation = (
   anim: Animation,
   state: AnimationApplyState
 ): void => {
+  if (SIT_TRACE.test(anim.animEventName)) {
+    animTrace({ ev: "apply", refr: refr.getFormID().toString(16), anim: anim.animEventName, n: anim.numChanges, last: state.lastNumChanges, overrides: state.useAnimOverrides });
+  }
   if (state.lastNumChanges === anim.numChanges) {
     return;
   }
@@ -331,9 +349,34 @@ export const setupHooks = (): void => {
         const i = allowedIdles.findIndex((pair) => {
           return pair[0] === ctx.selfId && pair[1] === ctx.animEventName;
         });
-        i === -1 ? (ctx.animEventName = "") : allowedIdles.splice(i, 1);
+        if (i === -1) {
+          if (SIT_TRACE.test(ctx.animEventName)) animTrace({ ev: "blocked", refr: ctx.selfId.toString(16), anim: ctx.animEventName });
+          ctx.animEventName = "";
+        } else {
+          allowedIdles.splice(i, 1);
+        }
       }
     },
-    leave: () => { },
+    leave: (ctx) => {
+      // ia-forge : un perso distant qui n'est pas « installé » sur le meuble refuse l'animation d'entrée
+      // (IdleChairLeftEnter…) ; l'animation « instantanée » passe (vue à l'apparition) → repli.
+      if (ctx.selfId < 0xff000000 || !ctx.animEventName) return;
+      const lower = ctx.animEventName.toLowerCase();
+      if (!actorSitAnimsLowerCase.includes(lower) || lower.endsWith("instant")) return;
+      animTrace({ ev: "result", refr: ctx.selfId.toString(16), anim: ctx.animEventName, ok: ctx.animationSucceeded });
+      const key = ctx.selfId + ":" + ctx.animEventName;
+      if (!ctx.animationSucceeded && !sitRetries.has(key)) {
+        sitRetries.add(key);
+        const fallback = lower.includes("stool") ? "IdleStoolEnterInstant" : lower.includes("jarl") ? "IdleJarlChairEnterInstant" : "IdleChairEnterInstant";
+        const refr = ObjectReference.from(Game.getFormEx(ctx.selfId));
+        if (refr) {
+          allowedIdles.push([ctx.selfId, fallback]);
+          Debug.sendAnimationEvent(refr, fallback);
+          setCollision(ctx.selfId, false);
+          animTrace({ ev: "fallback", refr: ctx.selfId.toString(16), anim: fallback });
+        }
+        Utility.wait(2).then(() => sitRetries.delete(key));
+      }
+    },
   });
 };

@@ -32,6 +32,7 @@ import { LoadGameService } from './loadGameService';
 import { UpdateMovementMessage } from '../messages/updateMovementMessage';
 import { ChangeValuesMessage } from '../messages/changeValuesMessage';
 import { UpdateAnimationMessage } from '../messages/updateAnimationMessage';
+import { animTrace } from '../../sync/animation';
 import { UpdateEquipmentMessage } from '../messages/updateEquipmentMessage';
 import { RagdollService } from './ragdollService';
 import { UpdateAppearanceMessage } from '../messages/updateAppearanceMessage';
@@ -679,6 +680,10 @@ export class RemoteServer extends ClientListener {
       return;
     }
 
+    // ia-forge : trace des animations d'assise reçues (voir sync/animation.ts, animTrace).
+    if (msg.data && /chair|stool|bench|sit|throne/i.test(msg.data.animEventName)) {
+      animTrace({ ev: "recv", idx: msg.idx, anim: msg.data.animEventName, n: msg.data.numChanges });
+    }
     form.animation = msg.data;
   }
 
