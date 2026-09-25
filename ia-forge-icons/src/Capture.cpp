@@ -14,8 +14,12 @@ namespace IaForge
     {
         // Côté maximal du rectangle capturé (pixels d'écran) : taille des textures de travail.
         constexpr UINT kTex = 1024;
-        // Images d'attente avant d'abandonner un objet dont le modèle ne se charge pas (~3 s à 60 i/s).
-        constexpr int kTimeoutFrames = 180;
+        // Images d'attente avant d'abandonner un objet dont le modèle ne se charge pas (~1,5 s à 60 i/s).
+        constexpr int kTimeoutFrames = 90;
+        // Objets par ouverture du menu (le jeu est en pause pendant ce temps) ; la suite 4 s plus tard.
+        constexpr int kPerSession = 6;
+        // Scène vidée avant un chargement quand elle contient déjà autant de modèles (Grid Inventory : 5, plafond 7).
+        constexpr std::size_t kSceneMax = 5;
         // Images où le modèle doit être prêt avant la capture (le moteur repose la rotation à l'arrivée).
         constexpr int kSettleFrames = 3;
 
@@ -124,7 +128,10 @@ namespace IaForge
         mgr->Begin3D(RE::INTERFACE_LIGHT_SCHEME::kInventory);
         m_running = true;
         m_hideRequested = false;
-        logger::info("scène 3D ouverte, {} objet(s) à capturer", m_queue.size());
+        m_sessionCount = 0;
+        m_needReset = false;
+        logger::info("scène 3D ouverte, {} objet(s) en file (au plus {} par passage), itemPos ({:.1f} {:.1f} {:.1f})", m_queue.size(), kPerSession,
+            mgr->itemPos.x, mgr->itemPos.y, mgr->itemPos.z);
     }
 
     void Capturer::End()
@@ -144,11 +151,17 @@ namespace IaForge
         m_menuWanted = false;
         ReleaseTextures();
         Notify();
-        logger::info("scène 3D fermée ({} objet(s) encore en file)", m_queue.size());
-        // Des demandes sont arrivées pendant la fermeture : on rouvre.
+        logger::info("scène 3D fermée : {} capturée(s), {} ratée(s) depuis le lancement ; {} objet(s) encore en file", m_captured, m_failed, m_queue.size());
+        // Encore des objets : prochain passage dans 4 s (le jeu reprend entre deux passages).
         if (!m_queue.empty()) {
             m_menuWanted = true;
-            RequestMenu(true);
+            std::thread([]() {
+                std::this_thread::sleep_for(std::chrono::seconds(4));
+                SKSE::GetTaskInterface()->AddTask([]() {
+                    auto* c = Capturer::GetSingleton();
+                    if (!c->m_queue.empty() && !c->m_running) c->RequestMenu(true);
+                });
+            }).detach();
         }
     }
 
@@ -156,11 +169,88 @@ namespace IaForge
     {
         auto* mgr = RE::Inventory3DManager::GetSingleton();
         if (!mgr || !m_current) return nullptr;
-        for (auto& lm : mgr->GetRuntimeData().loadedModels) {
+        auto& models = mgr->GetRuntimeData().loadedModels;
+        for (auto& lm : models) {
             if (lm.itemBase != static_cast<RE::TESForm*>(m_current) && lm.modelObj != m_current) continue;
             if (lm.spModel && lm.spModel->worldBound.radius > 0.0f) return lm.spModel.get();
         }
+        // Le moteur ne recharge pas un .nif déjà chargé : l'entrée garde le premier objet qui l'a demandé (Grid
+        // Inventory, FindCurrentModel). Même fichier = même image : on prend cette entrée. Les pointeurs de formes de la
+        // liste peuvent être périmés : lecture protégée.
+        if (m_currentModel.empty()) return nullptr;
+        for (auto& lm : models) {
+            if (!lm.spModel || lm.spModel->worldBound.radius <= 0.0f) continue;
+            for (RE::TESForm* src : { lm.itemBase, static_cast<RE::TESForm*>(lm.modelObj) }) {
+                if (!src) continue;
+                try {
+                    const auto* mdl = skyrim_cast<RE::TESModel*>(src);
+                    const char* path = mdl ? mdl->GetModel() : nullptr;
+                    if (path && _stricmp(path, m_currentModel.c_str()) == 0) return lm.spModel.get();
+                } catch (...) {
+                    // forme disparue
+                }
+            }
+        }
         return nullptr;
+    }
+
+    bool Capturer::LoadInFlight() const
+    {
+        auto* mgr = RE::Inventory3DManager::GetSingleton();
+        if (!mgr) return false;
+        auto& rt = mgr->GetRuntimeData();
+        if (rt.loadTask) return true;
+        for (auto& lm : rt.loadedModels) {
+            if (!lm.spModel || lm.spModel->worldBound.radius <= 0.0f) return true;
+        }
+        return false;
+    }
+
+    // Vide la scène (End3D puis Begin3D). Jamais pendant un chargement : End3D lit chaque modèle et planterait.
+    bool Capturer::ResetScene()
+    {
+        auto* mgr = RE::Inventory3DManager::GetSingleton();
+        if (!mgr || LoadInFlight()) return false;
+        mgr->UnloadInventoryItem();
+        mgr->End3D();
+        mgr->Begin3D(RE::INTERFACE_LIGHT_SCHEME::kInventory);
+        logger::info("[scène] vidée et rouverte");
+        return true;
+    }
+
+    // État complet de la scène 3D, pour comprendre une attente ou un abandon sans deviner.
+    void Capturer::LogScene(const char* a_why) const
+    {
+        auto* mgr = RE::Inventory3DManager::GetSingleton();
+        if (!mgr) return;
+        auto& rt = mgr->GetRuntimeData();
+        std::string list;
+        for (auto& lm : rt.loadedModels) {
+            list += fmt::format(" [base {} obj {} {} r={:.1f}{}]", static_cast<const void*>(lm.itemBase), static_cast<const void*>(lm.modelObj),
+                lm.spModel ? "modèle" : "VIDE", lm.spModel ? lm.spModel->worldBound.radius : 0.0f,
+                (lm.itemBase == static_cast<RE::TESForm*>(m_current) || lm.modelObj == m_current) ? " ← courant" : "");
+        }
+        logger::info("[{}] {:08X} ({}) image {} : chargement {}, itemPos ({:.1f} {:.1f} {:.1f}), {} modèle(s){}", a_why, m_currentId,
+            static_cast<const void*>(m_current), m_frames, rt.loadTask ? "EN COURS" : "aucun", mgr->itemPos.x, mgr->itemPos.y,
+            mgr->itemPos.z, rt.loadedModels.size(), list);
+    }
+
+    void Capturer::GiveUp(const char* a_why)
+    {
+        logger::warn("{:08X} ({}) : {}, abandon", m_currentId, m_currentModel, a_why);
+        LogScene("abandon");
+        ++m_failed;
+        // Ne jamais décharger en plein chargement (Grid Inventory) : on videra la scène quand il sera fini.
+        if (FindModel()) {
+            if (auto* mgr = RE::Inventory3DManager::GetSingleton()) mgr->UnloadInventoryItem();
+        } else {
+            m_needReset = true;
+            m_resetWait = 0;
+        }
+        m_queued.erase(m_currentId);
+        m_current = nullptr;
+        m_currentId = 0;
+        m_currentModel.clear();
     }
 
     void Capturer::Advance()
@@ -169,32 +259,59 @@ namespace IaForge
         auto* mgr = RE::Inventory3DManager::GetSingleton();
         if (!mgr) return;
         if (m_current) {
-            if (++m_frames > kTimeoutFrames) {
-                logger::warn("{:08X} : modèle jamais chargé, abandon", m_currentId);
-                Finish(false);
-            }
+            ++m_frames;
+            if (m_frames == 1 || m_frames % 30 == 0) LogScene("attente");
+            if (m_frames > kTimeoutFrames) GiveUp("modèle jamais arrivé");
             return;
         }
-        while (!m_queue.empty()) {
+        // Scène à vider après un abandon : on attend la fin du chargement en cours (borné à ~5 s).
+        if (m_needReset) {
+            if (ResetScene()) {
+                m_needReset = false;
+            } else if (++m_resetWait > 300) {
+                logger::warn("[scène] chargement jamais terminé : on continue sans vider");
+                m_needReset = false;
+            } else {
+                return;
+            }
+        }
+        while (!m_queue.empty() && m_sessionCount < kPerSession) {
             const auto id = m_queue.front();
             m_queue.pop_front();
             auto* form = RE::TESForm::LookupByID(id);
             auto* obj = form ? form->As<RE::TESBoundObject>() : nullptr;
-            if (!obj) {
-                logger::warn("{:08X} : pas un objet", id);
+            const auto* mdl = obj ? skyrim_cast<RE::TESModel*>(obj) : nullptr;
+            const char* path = mdl ? mdl->GetModel() : nullptr;
+            if (!obj || !path || !*path) {
+                logger::warn("{:08X} : {}", id, obj ? "pas de modèle 3D" : "pas un objet");
                 m_queued.erase(id);
                 continue;
+            }
+            // Scène trop pleine : on la vide avant (Grid Inventory, ItemPreview::Request).
+            if (mgr->GetRuntimeData().loadedModels.size() >= kSceneMax && !ResetScene()) {
+                m_queue.push_front(id);
+                return;
+            }
+            // Position de l'objet dans la scène : jamais initialisée si l'inventaire du jeu n'a pas été ouvert (il est
+            // remplacé par notre sac). Valeur du jeu relevée par Grid Inventory : (-12,4 ; -500 ; -26,25).
+            if (mgr->itemPos.y > -1.0f) {
+                mgr->itemPos = RE::NiPoint3(-12.4f, -500.0f, -26.25f);
+                mgr->itemPosCopy = mgr->itemPos;
+                logger::info("[scène] position d'objet initialisée (-12.4 -500 -26.25)");
             }
             mgr->UnloadInventoryItem();
             mgr->LoadInventoryItem(obj, nullptr);
             m_current = obj;
             m_currentId = id;
+            m_currentModel = path;
             m_frames = 0;
             m_readyFrames = 0;
+            ++m_sessionCount;
+            logger::info("{:08X} « {} » : chargement de {}", id, obj->GetName(), path);
             return;
         }
-        // File vide : on referme le menu, mais jamais pendant un chargement (End3D ferait planter le jeu).
-        if (!m_hideRequested && !mgr->GetRuntimeData().loadTask.get()) {
+        // File vide ou plafond atteint : on referme, jamais pendant un chargement (End3D ferait planter le jeu).
+        if (!m_hideRequested && !LoadInFlight()) {
             m_hideRequested = true;
             Notify();
             RequestMenu(false);
@@ -210,7 +327,10 @@ namespace IaForge
             return;
         }
         if (++m_readyFrames < kSettleFrames) return;
-        Finish(CaptureModel(model));
+        if (m_readyFrames == kSettleFrames) LogScene("prêt");
+        const bool ok = CaptureModel(model);
+        if (ok) ++m_captured; else ++m_failed;
+        Finish(ok);
     }
 
     void Capturer::Finish(bool a_ok)
@@ -220,6 +340,7 @@ namespace IaForge
         m_queued.erase(m_currentId);
         m_current = nullptr;
         m_currentId = 0;
+        m_currentModel.clear();
         // Annonce au fil de l'eau : le sac affiche les images dès qu'elles existent.
         if (m_done.size() >= 8) Notify();
     }

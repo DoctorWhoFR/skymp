@@ -41,6 +41,10 @@ namespace IaForge
         Capturer() = default;
 
         RE::NiAVObject* FindModel() const;
+        bool LoadInFlight() const;
+        bool ResetScene();
+        void LogScene(const char* a_why) const;
+        void GiveUp(const char* a_why);
         bool CaptureModel(RE::NiAVObject* a_model);
         void Finish(bool a_ok);
         void Notify();
@@ -55,6 +59,11 @@ namespace IaForge
         RE::FormID m_currentId = 0;
         int m_frames = 0;
         int m_readyFrames = 0;
+        int m_sessionCount = 0;    // objets pris depuis l'ouverture du menu (plafond : kPerSession)
+        bool m_needReset = false;  // un chargement a été abandonné : vider la scène dès qu'aucun n'est en cours
+        int m_resetWait = 0;
+        std::string m_currentModel;  // chemin du .nif de l'objet en cours (modèles partagés)
+        std::uint32_t m_captured = 0, m_failed = 0;
         bool m_running = false;
         bool m_menuWanted = false;
         bool m_hideRequested = false;
