@@ -1,8 +1,9 @@
 name: PR Windows Flatrim (AE/SE)
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, ia-forge ]
   pull_request:
     branches: [ main ]
   schedule:
@@ -36,3 +37,40 @@ jobs:
           SERVER_DIST_ARTIFACT_NAME: server-dist
           SKYMP5_PATCHES_PAT: ${{ secrets.SKYMP5_PATCHES_PAT }}
           NUGET_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ia-forge : publie le client compilé (Skyrim Platform + skymp5-client.js) dans une release publique
+  # de ce fork, téléchargeable sans jeton par le serveur ia-forge, qui le distribue par son launcher.
+  release:
+    needs: build
+    if: ${{ github.ref == 'refs/heads/ia-forge' && github.repository != 'skyrim-multiplayer/skymp' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: Flatrim_skymp5-client.js
+          path: client-js
+      - name: Assemble client
+        run: |
+          set -e
+          ls -R client-js | head
+          js=$(find client-js -name '*skymp5-client.js' | head -1)
+          cp "$js" dist/client/Data/Platform/Plugins/skymp5-client.js
+          rm -f dist/client/Data/Platform/Plugins/Flatrim_skymp5-client.js
+          (cd dist/client && zip -qr "$GITHUB_WORKSPACE/skymp-client.zip" .)
+          sha1sum skymp-client.zip | tee skymp-client.zip.sha1
+          ls -la dist/client/Data/Platform/Plugins || true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="ia-forge-${{ github.run_number }}"
+          gh release create "$tag" skymp-client.zip skymp-client.zip.sha1 \
+            --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease \
+            --title "ia-forge client ${{ github.run_number }}" \
+            --notes "Client compilé depuis ${{ github.sha }} (branche ia-forge)."
