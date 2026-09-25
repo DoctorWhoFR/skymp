@@ -7,6 +7,7 @@ import { AnyMessage } from "../messages/anyMessage";
 import { ClientListener, CombinedController, Sp } from "./clientListener";
 import { RemoteServer } from "./remoteServer";
 import { SendRawMessageEvent } from "../events/sendRawMessageEvent";
+import { traceRecv, traceSent } from "../../debugTrace";
 
 export class NetworkingService extends ClientListener {
   constructor(private sp: Sp, private controller: CombinedController) {
@@ -19,10 +20,12 @@ export class NetworkingService extends ClientListener {
   }
 
   private onSendMessage(e: SendMessageEvent<AnyMessage>) {
+    traceSent(e.message as { t?: unknown });
     this.sp.mpClientPlugin.send(JSON.stringify(e.message), this.isReliable(e.reliability));
   }
 
   private onSendRawMessage(e: SendRawMessageEvent) {
+    traceSent(null);
     // @ts-expect-error
     this.sp.mpClientPlugin.sendRaw(e.rawMessage, e.rawMessage.byteLength, this.isReliable(e.reliability));
   }
@@ -46,6 +49,7 @@ export class NetworkingService extends ClientListener {
 
     delete e.message._refrId;
 
+    traceSent(e.message as { t?: unknown });
     this.sp.mpClientPlugin.send(JSON.stringify(e.message), this.isReliable(e.reliability));
   }
 
@@ -97,9 +101,13 @@ export class NetworkingService extends ClientListener {
             msgAny = JSON.parse(this.sp.decodeUtf8(rawContent as unknown as ArrayBuffer));
           } else {
             // assume raw
+            traceRecv(null);
             const event = { rawContent: rawContent as unknown as ArrayBuffer};
             return this.controller.emitter.emit("anyRawMessage", event);
           }
+
+          // ia-forge : mode débogage, catégorie « reseau » (rares : un par un ; fréquents : résumé 5 s).
+          traceRecv(msgAny);
 
           if (msgAny.t === MsgType.OpenContainer) {
             const event = { message: msgAny };

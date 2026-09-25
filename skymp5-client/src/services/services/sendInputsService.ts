@@ -109,7 +109,7 @@ export class SendInputsService extends ClientListener {
                 const k = `${target}`;
                 if (!this.spawningTraced.has(k)) {
                     this.spawningTraced.add(k);
-                    animTrace({ ev: "send-skip-spawning", refr: worldViewMisc.remoteIdToLocalId(target).toString(16) });
+                    animTrace({ ev: "send-skip-spawning", refr: worldViewMisc.remoteIdToLocalId(target).toString(16) }, "naissance");
                 }
                 return;
             }

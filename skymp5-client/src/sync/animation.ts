@@ -13,6 +13,7 @@ import {
 } from "skyrimPlatform";
 import { Movement } from "./movement";
 import { applyWeapDrawn } from "./movementApply";
+import { gmDebugOn, gmTrace } from "../debugTrace";
 
 export enum AnimationEventName {
   Ragdoll = "Ragdoll",
@@ -29,26 +30,15 @@ export interface AnimationApplyState {
   useAnimOverrides: boolean;
 }
 
-// ia-forge : trace des animations « d'assise » des persos distants (lue par le script _gmAnimDiag du
-// gamemode via storage["gmAnimTrace"]) pour comprendre pourquoi s'asseoir n'était pas vu (2026-09-25).
+// ia-forge : traces des animations « d'assise » des persos distants (mode débogage, catégorie « anim »), pour
+// comprendre pourquoi s'asseoir n'était pas vu (2026-09-25).
 const SIT_TRACE = /chair|stool|bench|sit|throne/i;
-// Signature de version du client maison (lue par le gamemode : quel client tourne chez chaque joueur).
-try {
-  storage["gmClientBuild"] = "ia-forge-local-12";
-} catch (e) {
-  // storage indisponible
-}
-export const animTrace = (ev: Record<string, unknown>): void => {
-  try {
-    // Clé absente : le storage de SP renvoie une fonction « piège », pas undefined (storageProxy.js).
-    const cur = storage["gmAnimTrace"];
-    const t = Array.isArray(cur) ? (cur as Array<unknown>) : [];
-    t.push({ at: Date.now(), ...ev });
-    if (t.length > 50) t.splice(0, t.length - 50);
-    storage["gmAnimTrace"] = t;
-  } catch (e) {
-    // trace indisponible
-  }
+// Depuis ia-forge-local-13 : ces traces passent par le canal unique du mode débogage (debugTrace.ts), catégorie
+// « anim » (ou « naissance » pour la création des PNJ distants). La signature du client est dans debugTrace.ts.
+export const animTrace = (ev: Record<string, unknown>, cat = "anim"): void => {
+  if (!gmDebugOn(cat)) return;
+  const { ev: name, ...rest } = ev;
+  gmTrace(cat, String(name), rest);
 };
 const sitRetries = new Set<string>();
 

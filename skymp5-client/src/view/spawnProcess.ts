@@ -35,14 +35,14 @@ export class SpawnProcess {
       if (r2 && r2.getFormID() === refrId) {
         const after = ObjectReferenceEx.getPos(r2);
         const dist = ObjectReferenceEx.getDistance(after, pos);
-        animTrace({ ev: "spawn", refr: refrId.toString(16), base: (r2.getBaseObject()?.getFormID() ?? 0).toString(16), target: pos.map(Math.round), before: before.map(Math.round), after: after.map(Math.round), dist: Math.round(dist), cell: worldOrCell.toString(16) });
+        animTrace({ ev: "spawn", refr: refrId.toString(16), base: (r2.getBaseObject()?.getFormID() ?? 0).toString(16), target: pos.map(Math.round), before: before.map(Math.round), after: after.map(Math.round), dist: Math.round(dist), cell: worldOrCell.toString(16) }, "naissance");
         if (dist > 64 && worldOrCell) {
           try {
             TESModPlatform.moveRefrToPosition(r2, Cell.from(Game.getFormEx(worldOrCell)), WorldSpace.from(Game.getFormEx(worldOrCell)), pos[0], pos[1], pos[2], 0, 0, 0);
             const fixed = ObjectReferenceEx.getPos(r2);
-            animTrace({ ev: "spawn-fixed", refr: refrId.toString(16), dist: Math.round(ObjectReferenceEx.getDistance(fixed, pos)) });
+            animTrace({ ev: "spawn-fixed", refr: refrId.toString(16), dist: Math.round(ObjectReferenceEx.getDistance(fixed, pos)) }, "naissance");
           } catch (e) {
-            animTrace({ ev: "spawn-fix-error", refr: refrId.toString(16), error: String(e) });
+            animTrace({ ev: "spawn-fix-error", refr: refrId.toString(16), error: String(e) }, "naissance");
           }
         }
       }
@@ -77,10 +77,10 @@ export class SpawnProcess {
         TESModPlatform.moveRefrToPosition(refr, Cell.from(Game.getFormEx(this.worldOrCell)), WorldSpace.from(Game.getFormEx(this.worldOrCell)), this.pos[0], this.pos[1], this.pos[2], 0, 0, 0);
         after = ObjectReferenceEx.getPos(refr);
       } catch (e) {
-        animTrace({ ev: ev + "-error", refr: refrId.toString(16), error: String(e) });
+        animTrace({ ev: ev + "-error", refr: refrId.toString(16), error: String(e) }, "naissance");
       }
     }
-    animTrace({ ev, refr: refrId.toString(16), dist: Math.round(dist), fixed: dist > 64, after: after.map(Math.round), target: this.pos.map(Math.round) });
+    animTrace({ ev, refr: refrId.toString(16), dist: Math.round(dist), fixed: dist > 64, after: after.map(Math.round), target: this.pos.map(Math.round) }, "naissance");
   }
 
   private resurrect(refrId: number) {

@@ -33,6 +33,7 @@ import { UpdateMovementMessage } from '../messages/updateMovementMessage';
 import { ChangeValuesMessage } from '../messages/changeValuesMessage';
 import { UpdateAnimationMessage } from '../messages/updateAnimationMessage';
 import { animTrace } from '../../sync/animation';
+import { gmTrace } from '../../debugTrace';
 import { UpdateEquipmentMessage } from '../messages/updateEquipmentMessage';
 import { RagdollService } from './ragdollService';
 import { UpdateAppearanceMessage } from '../messages/updateAppearanceMessage';
@@ -142,12 +143,15 @@ export class RemoteServer extends ClientListener {
     if (!(hosted as Array<unknown>).includes(target)) {
       (hosted as Array<unknown>).push(target);
     }
+    // ia-forge : le serveur confie un PNJ à ce client (mode débogage, catégorie « hebergement »).
+    gmTrace("hebergement", `hostStart ${target.toString(16)} (j'héberge ${(hosted as Array<unknown>).length})`);
   }
 
   private onHostStopMessage(event: ConnectionMessage<HostStopMessage>) {
     const msg = event.message;
     const target = msg.target;
     logTrace(this, 'hostStop ' + target.toString(16));
+    gmTrace("hebergement", `hostStop ${target.toString(16)}`);
 
     const hosted = storage['hosted'] as Array<number>;
     if (typeof hosted === typeof []) {
