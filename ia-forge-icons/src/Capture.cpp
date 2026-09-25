@@ -14,17 +14,14 @@ namespace IaForge
     {
         // Côté maximal du rectangle capturé (pixels d'écran) : taille des textures de travail.
         constexpr UINT kTex = 1024;
-        // Images d'attente avant d'abandonner un objet dont le modèle ne se charge pas (~1,5 s à 60 i/s).
-        constexpr int kTimeoutFrames = 90;
-        // Objets par ouverture du menu (le jeu est en pause pendant ce temps) ; la suite 4 s plus tard.
-        constexpr int kPerSession = 6;
         // Scène vidée avant un chargement quand elle contient déjà autant de modèles (Grid Inventory : 5, plafond 7).
         constexpr std::size_t kSceneMax = 5;
         // Images où le modèle doit être prêt avant la capture (le moteur repose la rotation à l'arrivée).
         constexpr int kSettleFrames = 3;
         // Durée maximale d'un passage (jeu en pause) : au-delà, on referme quoi qu'il arrive.
         constexpr auto kSessionMax = std::chrono::seconds(12);
-        // Fermeture différée de la scène : images de jeu avant de la forcer si seule la tâche de chargement traîne (Grid : 300).
+        // Fermeture différée de la scène : essais (une image de jeu chacun, ~5 s) avant de la forcer si seule la tâche de
+        // chargement traîne (Grid : 300).
         constexpr int kTeardownTries = 300;
 
         template <class T>
@@ -77,6 +74,43 @@ namespace IaForge
         {
             return a_fmt == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8 : 4;
         }
+    }
+
+    // Réglages : Data/SKSE/Plugins/IaForgeIcons.ini, relu à chaque ouverture du menu (changer une valeur = pas de
+    // recompilation, il suffit de rouvrir le sac). Lignes « clé=valeur », « ; » pour un commentaire.
+    Settings& Cfg()
+    {
+        static Settings cfg;
+        return cfg;
+    }
+
+    void ReadSettings()
+    {
+        auto& c = Cfg();
+        c = Settings{};
+        std::ifstream in("Data/SKSE/Plugins/IaForgeIcons.ini");
+        std::string line;
+        while (std::getline(in, line)) {
+            const auto eq = line.find('=');
+            if (eq == std::string::npos || line.empty() || line[0] == ';' || line[0] == '#') continue;
+            auto key = line.substr(0, eq);
+            auto val = line.substr(eq + 1);
+            const auto trim = [](std::string& t) {
+                while (!t.empty() && std::isspace(static_cast<unsigned char>(t.back()))) t.pop_back();
+                while (!t.empty() && std::isspace(static_cast<unsigned char>(t.front()))) t.erase(t.begin());
+            };
+            trim(key);
+            trim(val);
+            try {
+                if (key == "pause") c.pause = std::stoi(val) != 0;
+                else if (key == "timeoutFrames") c.timeoutFrames = std::clamp(std::stoi(val), 10, 600);
+                else if (key == "perSession") c.perSession = std::clamp(std::stoi(val), 1, 40);
+                else if (key == "cursor") c.cursor = std::stoi(val) != 0;
+            } catch (...) {
+                logger::warn("ini : valeur illisible pour {}", key);
+            }
+        }
+        logger::info("réglages : pause={} timeoutFrames={} perSession={} cursor={}", c.pause, c.timeoutFrames, c.perSession, c.cursor);
     }
 
     std::filesystem::path IconPath(RE::FormID a_id)
@@ -144,7 +178,7 @@ namespace IaForge
         m_sessionCount = 0;
         m_needReset = false;
         m_openedAt = std::chrono::steady_clock::now();
-        logger::info("scène 3D ouverte, {} objet(s) en file (au plus {} par passage), itemPos ({:.1f} {:.1f} {:.1f})", m_queue.size(), kPerSession,
+        logger::info("scène 3D ouverte, {} objet(s) en file (au plus {} par passage), itemPos ({:.1f} {:.1f} {:.1f})", m_queue.size(), Cfg().perSession,
             mgr->itemPos.x, mgr->itemPos.y, mgr->itemPos.z);
     }
 
@@ -197,6 +231,8 @@ namespace IaForge
         if (a_session != m_session || m_running || !m_scene3D) return;
         auto* mgr = RE::Inventory3DManager::GetSingleton();
         if (!mgr) return;
+        if (a_tries == 0) m_teardownAt = std::chrono::steady_clock::now();
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_teardownAt).count();
         if (LoadInFlight()) {
             if (a_tries == 0) LogScene("fermeture différée");
             // Une scène laissée ouverte, jeu relancé, cache le monde (Grid, GI73). Au bout de kTeardownTries images :
@@ -206,10 +242,18 @@ namespace IaForge
                 LogScene("fermeture forcée");
                 logger::warn("[scène] chargement toujours en cours après {} images de jeu : fermeture forcée", a_tries);
             } else {
-                if (a_tries > 0 && a_tries % kTeardownTries == 0) LogScene("fermeture toujours différée");
-                SKSE::GetTaskInterface()->AddTask([this, a_session, a_tries]() { TeardownWhenIdle(a_session, a_tries + 1); });
+                if (a_tries > 0 && a_tries % 60 == 0) LogScene(fmt::format("fermeture toujours différée, {} ms", elapsedMs).c_str());
+                // v0.3 : AddTask depuis une tâche s'exécute dans la même image (300 essais en 15 ms) ; on laisse
+                // vraiment passer une image de jeu entre deux essais.
+                std::thread([this, a_session, a_tries]() {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                    SKSE::GetTaskInterface()->AddTask([this, a_session, a_tries]() { TeardownWhenIdle(a_session, a_tries + 1); });
+                }).detach();
                 return;
             }
+        } else if (a_tries > 0) {
+            // Le chargement bloqué pendant le passage a fini une fois le jeu relancé : c'est LA réponse attendue.
+            LogScene(fmt::format("chargement terminé jeu relancé, {} ms", elapsedMs).c_str());
         }
         mgr->UnloadInventoryItem();
         if (SceneHalfBuilt()) {
@@ -354,7 +398,7 @@ namespace IaForge
         if (m_current) {
             ++m_frames;
             if (m_frames == 1 || m_frames % 30 == 0) LogScene("attente");
-            if (m_frames > kTimeoutFrames) {
+            if (m_frames > Cfg().timeoutFrames) {
                 GiveUp("modèle jamais arrivé");
                 // Un chargement bloqué ne se débloque pas en pause : on rend la main au jeu, la scène sera vidée
                 // quand il aura fini, et le passage suivant reprendra.
@@ -370,7 +414,7 @@ namespace IaForge
                 return;
             }
         }
-        while (!m_queue.empty() && m_sessionCount < kPerSession) {
+        while (!m_queue.empty() && m_sessionCount < Cfg().perSession) {
             const auto id = m_queue.front();
             m_queue.pop_front();
             auto* form = RE::TESForm::LookupByID(id);
@@ -687,16 +731,19 @@ namespace IaForge
     RE::IMenu* IconMenu::Creator()
     {
         using Flags = RE::UI_MENU_FLAGS;
+        ReadSettings();
+        const auto& c = Cfg();
         auto* menu = new IconMenu();
-        // Drapeaux recopiés à l'identique de Grid Inventory et Modex (GridMenu::Creator, ModexGUIMenu::Creator), dont
-        // les chargements de modèles aboutissent. La v0.2 n'avait que kPausesGame | kCustomRendering |
-        // kDisablePauseMenu et aucun chargement disque ne finissait (seuls les modèles déjà en mémoire arrivaient) ;
-        // hypothèse à vérifier dans le journal v0.3 : il manquait kUsesMenuContext (le « mode menu » du moteur).
-        menu->menuFlags.set(Flags::kUpdateUsesCursor, Flags::kUsesCursor);
+        // Drapeaux de Grid Inventory / Modex. Résultat v0.3 (journal de Max, 23:14) : avec ces drapeaux et le jeu en
+        // pause, aucun chargement disque n'aboutit non plus (seuls les modèles déjà en mémoire arrivent, v0.1). Reste à
+        // savoir si c'est la pause : « pause=0 » dans l'ini ouvre le menu sans arrêter le jeu (Grid et Modex disent que
+        // le moteur ne dessine alors pas la scène 3D ; Skyrim Souls RE, présent chez nous, la dessine pourtant dans
+        // l'inventaire non mis en pause : à mesurer).
+        if (c.cursor) menu->menuFlags.set(Flags::kUpdateUsesCursor, Flags::kUsesCursor);
         menu->menuFlags.set(Flags::kCustomRendering);
         menu->menuFlags.set(Flags::kUsesMenuContext);
         menu->menuFlags.set(Flags::kAllowSaving);
-        menu->menuFlags.set(Flags::kPausesGame, Flags::kDisablePauseMenu);
+        if (c.pause) menu->menuFlags.set(Flags::kPausesGame, Flags::kDisablePauseMenu);
         menu->depthPriority = 11;
         return menu;
     }

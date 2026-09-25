@@ -23,6 +23,17 @@ namespace IaForge
 
     std::filesystem::path IconPath(RE::FormID a_id);
 
+    // Réglages (Data/SKSE/Plugins/IaForgeIcons.ini), relus à chaque ouverture du menu.
+    struct Settings
+    {
+        bool pause = false;      // 1 : le menu de capture met le jeu en pause (v0.1-v0.3) ; 0 : le jeu continue
+        int timeoutFrames = 90;  // images d'attente d'un modèle avant abandon
+        int perSession = 6;      // objets par passage
+        bool cursor = false;     // 1 : drapeaux curseur de Grid (souris visible pendant le passage)
+    };
+    Settings& Cfg();
+    void ReadSettings();
+
     class Capturer
     {
     public:
@@ -75,6 +86,7 @@ namespace IaForge
         std::uint32_t m_session = 0;
         int m_stalls = 0;  // passages de suite sans aucun objet pris
         std::chrono::steady_clock::time_point m_openedAt{};
+        std::chrono::steady_clock::time_point m_teardownAt{};
         std::unordered_set<RE::FormID> m_retried;  // objets déjà remis une fois en file après un abandon
 
         // Textures de travail (même format que l'image du jeu).

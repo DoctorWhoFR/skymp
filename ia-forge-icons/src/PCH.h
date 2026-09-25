@@ -11,7 +11,9 @@
 
 #include <spdlog/sinks/basic_file_sink.h>
 
+#include <cctype>
 #include <chrono>
+#include <fstream>
 #include <deque>
 #include <thread>
 #include <filesystem>
