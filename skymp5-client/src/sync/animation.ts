@@ -32,6 +32,12 @@ export interface AnimationApplyState {
 // ia-forge : trace des animations « d'assise » des persos distants (lue par le script _gmAnimDiag du
 // gamemode via storage["gmAnimTrace"]) pour comprendre pourquoi s'asseoir n'était pas vu (2026-09-25).
 const SIT_TRACE = /chair|stool|bench|sit|throne/i;
+// Signature de version du client maison (lue par le gamemode : quel client tourne chez chaque joueur).
+try {
+  storage["gmClientBuild"] = "ia-forge-local-3";
+} catch (e) {
+  // storage indisponible
+}
 export const animTrace = (ev: Record<string, unknown>): void => {
   try {
     const t = (storage["gmAnimTrace"] as Array<unknown> | undefined) ?? [];

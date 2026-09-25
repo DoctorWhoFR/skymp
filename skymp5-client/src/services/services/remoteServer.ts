@@ -677,6 +677,9 @@ export class RemoteServer extends ClientListener {
 
     if (form === undefined) {
       logError(this, `onUpdateAnimationMessage - Form with idx`, msg.idx, `not found`);
+      if (msg.data && /chair|stool|bench|sit|throne/i.test(msg.data.animEventName)) {
+        animTrace({ ev: "recv-no-form", idx: msg.idx, anim: msg.data.animEventName });
+      }
       return;
     }
 

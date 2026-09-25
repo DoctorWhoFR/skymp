@@ -7,7 +7,7 @@ import { getMovement } from "../../sync/movementGet";
 // TODO: refactor this out
 import * as worldViewMisc from "../../view/worldViewMisc";
 
-import { Animation, AnimationSource } from "../../sync/animation";
+import { Animation, AnimationSource, animTrace } from "../../sync/animation";
 import { Actor, EquipEvent, FormType } from "skyrimPlatform";
 import { getAppearance } from "../../sync/appearance";
 import { ActorValues, getActorValues } from "../../sync/actorvalues";
@@ -219,6 +219,10 @@ export class SendInputsService extends ClientListener {
             // Drink potion anim from this mod https://www.nexusmods.com/skyrimspecialedition/mods/97660
             if (anim.animEventName !== '' && !anim.animEventName.startsWith("DrinkPotion_")) {
                 this.lastAnimationSent.set(refrIdStr, anim);
+                // ia-forge : trace de l'envoi (assise), voir sync/animation.ts animTrace.
+                if (/chair|stool|bench|sit|throne/i.test(anim.animEventName)) {
+                    animTrace({ ev: "send", refr: refrIdStr, anim: anim.animEventName, n: anim.numChanges });
+                }
                 this.updateActorValuesAfterAnimation(anim.animEventName);
                 const message: MessageWithRefrId<UpdateAnimationMessage> = {
                     t: MsgType.UpdateAnimation,
