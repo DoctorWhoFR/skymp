@@ -16,6 +16,8 @@
 
 struct D3D11_TEXTURE2D_DESC;
 
+struct D3D11_TEXTURE2D_DESC;
+
 namespace IaForge
 {
     inline constexpr auto kMenuName = "IaForgeIconMenu"sv;
