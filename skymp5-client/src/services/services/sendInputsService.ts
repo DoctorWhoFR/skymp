@@ -8,6 +8,7 @@ import { getMovement } from "../../sync/movementGet";
 import * as worldViewMisc from "../../view/worldViewMisc";
 
 import { Animation, AnimationSource, animTrace } from "../../sync/animation";
+import { SpawnProcess } from "../../view/spawnProcess";
 import { Actor, EquipEvent, FormType } from "skyrimPlatform";
 import { getAppearance } from "../../sync/appearance";
 import { ActorValues, getActorValues } from "../../sync/actorvalues";
@@ -90,6 +91,8 @@ export class SendInputsService extends ClientListener {
         this.sp.Utility.wait(3).then(() => (this.equipmentChanged = true));
     }
 
+    private spawningTraced = new Set<string>();
+
     private sendInputs() {
         const hosted =
             typeof this.sp.storage['hosted'] === typeof [] ? this.sp.storage['hosted'] : [];
@@ -100,6 +103,16 @@ export class SendInputsService extends ClientListener {
         const world = modelSource.getWorldModel();
 
         targets.forEach((target) => {
+            // ia-forge : PNJ hébergé dont la naissance (SpawnProcess) n'est pas finie : rien à envoyer, sa position
+            // n'est pas encore la bonne (créé sur le joueur). Voir view/spawnProcess.ts.
+            if (target && SpawnProcess.isSpawning(worldViewMisc.remoteIdToLocalId(target))) {
+                const k = `${target}`;
+                if (!this.spawningTraced.has(k)) {
+                    this.spawningTraced.add(k);
+                    animTrace({ ev: "send-skip-spawning", refr: worldViewMisc.remoteIdToLocalId(target).toString(16) });
+                }
+                return;
+            }
             const targetFormModel = target ? this.getForm(target, world) : this.getForm(undefined, world);
             this.sendMovement(target, targetFormModel);
             this.sendAnimation(target);
