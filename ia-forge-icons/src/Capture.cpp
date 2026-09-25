@@ -113,6 +113,20 @@ namespace IaForge
         logger::info("réglages : pause={} timeoutFrames={} perSession={} cursor={}", c.pause, c.timeoutFrames, c.perSession, c.cursor);
     }
 
+    // Chemin du .nif qu'affiche l'inventaire : le modèle de l'objet, ou pour une armure son modèle « au sol »
+    // (TESBipedModelForm::worldModels, l'armure n'a pas de TESModel direct : v0.5 « pas de modèle 3D »).
+    const char* ModelPath(RE::TESBoundObject* a_obj)
+    {
+        if (!a_obj) return nullptr;
+        if (auto* armo = a_obj->As<RE::TESObjectARMO>()) {
+            const char* p = armo->worldModels[0].GetModel();
+            if (!p || !*p) p = armo->worldModels[1].GetModel();
+            return p;
+        }
+        const auto* mdl = skyrim_cast<RE::TESModel*>(a_obj);
+        return mdl ? mdl->GetModel() : nullptr;
+    }
+
     std::filesystem::path IconPath(RE::FormID a_id)
     {
         return std::filesystem::path("Data/SKSE/Plugins/IaForgeIcons") / fmt::format("{:08X}.png", a_id);
@@ -293,8 +307,8 @@ namespace IaForge
             for (RE::TESForm* src : { lm.itemBase, static_cast<RE::TESForm*>(lm.modelObj) }) {
                 if (!src) continue;
                 try {
-                    const auto* mdl = skyrim_cast<RE::TESModel*>(src);
-                    const char* path = mdl ? mdl->GetModel() : nullptr;
+                    auto* bound = src->As<RE::TESBoundObject>();
+                    const char* path = ModelPath(bound);
                     if (path && _stricmp(path, m_currentModel.c_str()) == 0) return lm.spModel.get();
                 } catch (...) {
                     // forme disparue
@@ -419,8 +433,7 @@ namespace IaForge
             m_queue.pop_front();
             auto* form = RE::TESForm::LookupByID(id);
             auto* obj = form ? form->As<RE::TESBoundObject>() : nullptr;
-            const auto* mdl = obj ? skyrim_cast<RE::TESModel*>(obj) : nullptr;
-            const char* path = mdl ? mdl->GetModel() : nullptr;
+            const char* path = ModelPath(obj);
             if (!obj || !path || !*path) {
                 logger::warn("{:08X} : {}", id, obj ? "pas de modèle 3D" : "pas un objet");
                 m_queued.erase(id);

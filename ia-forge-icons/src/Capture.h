@@ -16,8 +16,6 @@
 
 struct D3D11_TEXTURE2D_DESC;
 
-struct D3D11_TEXTURE2D_DESC;
-
 namespace IaForge
 {
     inline constexpr auto kMenuName = "IaForgeIconMenu"sv;
@@ -26,6 +24,7 @@ namespace IaForge
     inline constexpr int kIconSize = 256;
 
     std::filesystem::path IconPath(RE::FormID a_id);
+    const char* ModelPath(RE::TESBoundObject* a_obj);
 
     // Réglages (Data/SKSE/Plugins/IaForgeIcons.ini), relus à chaque ouverture du menu.
     struct Settings
