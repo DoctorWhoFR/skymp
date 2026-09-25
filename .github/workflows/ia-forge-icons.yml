@@ -1,0 +1,66 @@
+# ia-forge : compile le plugin SKSE ia-forge-icons (photos des objets pour le sac) et le publie dans une release
+# publique « ia-forge-icons-N » avec le journal de compilation (lisible sans jeton, même en cas d'échec).
+name: ia-forge icons (SKSE)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ ia-forge ]
+    paths:
+      - 'ia-forge-icons/**'
+      - '.github/workflows/ia-forge-icons.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: ${{ github.repository != 'skyrim-multiplayer/skymp' }}
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    env:
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}\vcpkg-cache,readwrite'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: 'false'
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\vcpkg-cache
+          key: ia-forge-icons-vcpkg-${{ hashFiles('ia-forge-icons/vcpkg.json') }}
+          restore-keys: ia-forge-icons-vcpkg-
+      - name: Configure and build
+        id: build
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          New-Item -ItemType Directory -Force "${{ github.workspace }}\vcpkg-cache" | Out-Null
+          $log = "${{ github.workspace }}\build.log"
+          $tc = "$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+          cmake -S ia-forge-icons -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE="$tc" -DVCPKG_TARGET_TRIPLET=x64-windows-static 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw "configure" }
+          cmake --build build --config Release 2>&1 | Tee-Object -FilePath $log -Append
+          if ($LASTEXITCODE -ne 0) { throw "build" }
+          Copy-Item build\Release\IaForgeIcons.dll .
+          Copy-Item build\Release\IaForgeIcons.pdb . -ErrorAction SilentlyContinue
+      - name: Publish release (DLL + journal)
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "ia-forge-icons-${{ github.run_number }}"
+          $files = @("build.log")
+          if (Test-Path IaForgeIcons.dll) { $files += "IaForgeIcons.dll" }
+          if (Test-Path IaForgeIcons.pdb) { $files += "IaForgeIcons.pdb" }
+          $state = if (Test-Path IaForgeIcons.dll) { "réussie" } else { "ÉCHEC (voir build.log)" }
+          gh release create $tag @files --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease `
+            --title "ia-forge icons ${{ github.run_number }} : $state" --notes "Plugin SKSE ia-forge-icons compilé depuis ${{ github.sha }}. Compilation $state."
+      - name: Fail if build failed
+        if: steps.build.outcome == 'failure'
+        run: exit 1

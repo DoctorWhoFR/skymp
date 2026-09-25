@@ -1,0 +1,5 @@
+{
+  "name": "ia-forge-icons",
+  "version-string": "0.1.0",
+  "dependencies": ["spdlog", "fmt", "rapidcsv", "directxtk", "stb"]
+}

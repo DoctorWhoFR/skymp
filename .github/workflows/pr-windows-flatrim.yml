@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, ia-forge ]
+    # ia-forge : le plugin d'icônes a son propre workflow (ia-forge-icons.yml), inutile de recompiler le client.
+    paths-ignore:
+      - 'ia-forge-icons/**'
+      - '.github/workflows/ia-forge-icons.yml'
   pull_request:
     branches: [ main ]
   schedule:
