@@ -34,7 +34,7 @@ export interface AnimationApplyState {
 const SIT_TRACE = /chair|stool|bench|sit|throne/i;
 // Signature de version du client maison (lue par le gamemode : quel client tourne chez chaque joueur).
 try {
-  storage["gmClientBuild"] = "ia-forge-local-3";
+  storage["gmClientBuild"] = "ia-forge-local-4";
 } catch (e) {
   // storage indisponible
 }
@@ -243,6 +243,10 @@ export class AnimationSource {
           return;
         }
 
+        if (/chair|stool|bench|sit|throne|attack/i.test(ctx.animEventName)) {
+          animTrace({ ev: "hook", refr: this.refrId.toString(16), anim: ctx.animEventName, ok: ctx.animationSucceeded });
+        }
+
         if (!ctx.animationSucceeded) {
           // Workaround, see carryAnimSystem.ts in gamemode
           // Case-sensetive check here for better performance
@@ -280,6 +284,10 @@ export class AnimationSource {
   }
 
   private onSendAnimationEvent(animEventName: string) {
+    // ia-forge : trace de la capture (assise, attaques) côté émetteur.
+    if (/chair|stool|bench|sit|throne|attack/i.test(animEventName)) {
+      animTrace({ ev: "capture", refr: this.refrId.toString(16), anim: animEventName, n: this.numChanges });
+    }
     if (ignoredAnims.has(animEventName)) {
       return;
     }

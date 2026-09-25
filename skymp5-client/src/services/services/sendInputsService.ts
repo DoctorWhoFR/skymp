@@ -211,6 +211,12 @@ export class SendInputsService extends ClientListener {
         }
         const anim = animSource.getAnimation();
 
+        // ia-forge : trace de chaque changement vu par l'envoi (assise, attaques).
+        const lastSeen = this.lastAnimationSent.get(refrIdStr);
+        if ((!lastSeen || anim.numChanges !== lastSeen.numChanges) && /chair|stool|bench|sit|throne|attack/i.test(anim.animEventName)) {
+            animTrace({ ev: "pending", refr: refrIdStr, anim: anim.animEventName, n: anim.numChanges, last: lastSeen ? lastSeen.numChanges : -1, target: _refrId ?? 0 });
+        }
+
         const lastAnimationSent = this.lastAnimationSent.get(refrIdStr);
         if (
             !lastAnimationSent ||
@@ -220,7 +226,7 @@ export class SendInputsService extends ClientListener {
             if (anim.animEventName !== '' && !anim.animEventName.startsWith("DrinkPotion_")) {
                 this.lastAnimationSent.set(refrIdStr, anim);
                 // ia-forge : trace de l'envoi (assise), voir sync/animation.ts animTrace.
-                if (/chair|stool|bench|sit|throne/i.test(anim.animEventName)) {
+                if (/chair|stool|bench|sit|throne|attack/i.test(anim.animEventName)) {
                     animTrace({ ev: "send", refr: refrIdStr, anim: anim.animEventName, n: anim.numChanges });
                 }
                 this.updateActorValuesAfterAnimation(anim.animEventName);
