@@ -460,6 +460,11 @@ namespace IaForge
         auto* model = FindModel();
         if (!model) {
             m_readyFrames = 0;
+            // Grid Inventory et Modex appellent Inventory3DManager::Render() à CHAQUE image tant qu'une demande est en
+            // cours, modèle arrivé ou non ; les v0.1-v0.4 ne l'appelaient qu'après l'arrivée du modèle, et aucun
+            // chargement disque n'a jamais abouti. Hypothèse : c'est Render() qui fait avancer la tâche de chargement.
+            // L'image est sauvegardée puis remise pour que rien ne se voie.
+            PumpRender();
             return;
         }
         if (++m_readyFrames < kSettleFrames) return;
@@ -494,6 +499,64 @@ namespace IaForge
         SKSE::ModCallbackEvent ev{ RE::BSFixedString(kEventDone.data()), RE::BSFixedString(list.c_str()), n, nullptr };
         if (auto* src = SKSE::GetModCallbackEventSource()) src->SendEvent(&ev);
         logger::info("annoncé : {} icône(s)", static_cast<int>(n));
+    }
+
+    void Capturer::PumpRender()
+    {
+        auto* inv = RE::Inventory3DManager::GetSingleton();
+        auto* renderer = RE::BSGraphics::Renderer::GetSingleton();
+        if (!inv || !renderer) return;
+        const auto& data = renderer->GetRuntimeData();
+        auto* context = reinterpret_cast<ID3D11DeviceContext*>(data.context);
+        auto* rtv = reinterpret_cast<ID3D11RenderTargetView*>(data.renderWindows[0].renderView);
+        if (!context || !rtv) return;
+        ID3D11Resource* srcRes = nullptr;
+        rtv->GetResource(&srcRes);
+        if (!srcRes) return;
+        ID3D11Texture2D* src = nullptr;
+        srcRes->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&src));
+        srcRes->Release();
+        if (!src) return;
+        D3D11_TEXTURE2D_DESC sd{};
+        src->GetDesc(&sd);
+        if (!InitTextures(sd.Format) || !InitFullScratch(sd)) {
+            src->Release();
+            return;
+        }
+        auto* full = static_cast<ID3D11Texture2D*>(m_scratchFull);
+        context->CopyResource(full, src);
+        inv->Render();
+        context->CopyResource(src, full);
+        src->Release();
+        if (!m_pumpSaid) {
+            m_pumpSaid = true;
+            logger::info("[pompe] Render() appelé à chaque image en attendant le modèle (Grid / Modex)");
+        }
+    }
+
+    bool Capturer::InitFullScratch(const D3D11_TEXTURE2D_DESC& a_src)
+    {
+        if (m_scratchFull && m_fullW == a_src.Width && m_fullH == a_src.Height && m_format == static_cast<std::uint32_t>(a_src.Format)) return true;
+        Release<ID3D11Texture2D>(m_scratchFull);
+        auto* renderer = RE::BSGraphics::Renderer::GetSingleton();
+        if (!renderer) return false;
+        auto* device = reinterpret_cast<ID3D11Device*>(renderer->GetRuntimeData().forwarder);
+        if (!device) return false;
+        D3D11_TEXTURE2D_DESC desc = a_src;
+        desc.MipLevels = 1;
+        desc.ArraySize = 1;
+        desc.SampleDesc.Count = 1;
+        desc.SampleDesc.Quality = 0;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        desc.CPUAccessFlags = 0;
+        desc.MiscFlags = 0;
+        ID3D11Texture2D* t = nullptr;
+        if (FAILED(device->CreateTexture2D(&desc, nullptr, &t))) return false;
+        m_scratchFull = t;
+        m_fullW = a_src.Width;
+        m_fullH = a_src.Height;
+        return true;
     }
 
     bool Capturer::InitTextures(std::uint32_t a_format)
@@ -544,7 +607,9 @@ namespace IaForge
         Release<ID3D11Texture2D>(m_white);
         Release<ID3D11Texture2D>(m_stageBlack);
         Release<ID3D11Texture2D>(m_stageWhite);
+        Release<ID3D11Texture2D>(m_scratchFull);
         m_format = 0;
+        m_fullW = m_fullH = 0;
     }
 
     bool Capturer::CaptureModel(RE::NiAVObject* a_model)

@@ -29,7 +29,7 @@ namespace
 }
 
 SKSEPluginInfo(
-    .Version = { 0, 4, 0, 0 },
+    .Version = { 0, 5, 0, 0 },
     .Name = "IaForgeIcons",
     .Author = "ia-forge",
     .RuntimeCompatibility = SKSE::VersionIndependence::AddressLibrary)
@@ -37,7 +37,7 @@ SKSEPluginInfo(
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 {
     InitializeLog();
-    logger::info("IaForgeIcons 0.4.0, compilé le " __DATE__ " " __TIME__);
+    logger::info("IaForgeIcons 0.5.0, compilé le " __DATE__ " " __TIME__);
     SKSE::Init(a_skse);
     SKSE::GetMessagingInterface()->RegisterListener(MessageHandler);
     return true;

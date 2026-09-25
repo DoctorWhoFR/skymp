@@ -14,6 +14,8 @@
 //   sortie : événement de mod « IaForgeIcons_Done », strArg = ids capturés (ou déjà présents), numArg = leur nombre.
 // Fichiers : Data/SKSE/Plugins/IaForgeIcons/<FORMID sur 8 chiffres>.png, 256 × 256, fond transparent.
 
+struct D3D11_TEXTURE2D_DESC;
+
 namespace IaForge
 {
     inline constexpr auto kMenuName = "IaForgeIconMenu"sv;
@@ -64,6 +66,8 @@ namespace IaForge
         void Notify();
         void RequestMenu(bool a_show);
         bool InitTextures(std::uint32_t a_format);
+        bool InitFullScratch(const D3D11_TEXTURE2D_DESC& a_src);
+        void PumpRender();
         void ReleaseTextures();
 
         std::deque<RE::FormID> m_queue;
@@ -96,6 +100,9 @@ namespace IaForge
         void* m_white = nullptr;    // rendu sur fond blanc
         void* m_stageBlack = nullptr;
         void* m_stageWhite = nullptr;
+        void* m_scratchFull = nullptr;  // image entière, remise après chaque Render() de pompe
+        unsigned m_fullW = 0, m_fullH = 0;
+        bool m_pumpSaid = false;
     };
 
     // Menu sans interface qui met le jeu en pause le temps des captures.
