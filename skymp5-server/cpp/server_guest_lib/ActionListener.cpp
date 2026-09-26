@@ -667,6 +667,15 @@ void ActionListener::OnHostAttempt(const RawMessageData& rawMsgData,
     return;
   }
 
+  // ia-forge (BUG-038) : un cadavre ne change plus d'hôte. Son hôte cesse
+  // d'envoyer des mouvements à sa mort, ce qui déclenchait chez les autres
+  // « not seeing movement for long time » et une prise d'hébergement du mort.
+  if (auto remoteActor = remote.AsActor(); remoteActor && remoteActor->IsDead()) {
+    spdlog::trace("OnHostAttempt - {:x} is dead, host attempt by {:x} ignored",
+                  remoteId, me->GetFormId());
+    return;
+  }
+
   auto& hoster = partOne.worldState.hosters[remoteId];
   const uint32_t prevHoster = hoster;
 
@@ -682,7 +691,7 @@ void ActionListener::OnHostAttempt(const RawMessageData& rawMsgData,
   if (hoster == 0 || !lastRemoteUpdate ||
       std::chrono::system_clock::now() - *lastRemoteUpdate >
         hostResetTimeout) {
-    partOne.GetLogger().info("Hoster changed from {0:x} to {0:x}", prevHoster,
+    partOne.GetLogger().info("Hoster changed from {0:x} to {1:x}", prevHoster,
                              me->GetFormId());
     hoster = me->GetFormId();
     remote.UpdateHoster(hoster);

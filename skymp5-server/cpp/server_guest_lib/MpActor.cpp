@@ -1009,7 +1009,30 @@ void MpActor::SendAndSetDeathState(bool isDead, bool shouldTeleport)
   auto position = GetSpawnPoint();
 
   auto respawnMsg = GetDeathStateMsg(position, isDead, shouldTeleport);
-  GetActorToSendTo().SendToUser(respawnMsg, true);
+  auto& actorToSendTo = GetActorToSendTo();
+  actorToSendTo.SendToUser(respawnMsg, true);
+
+  // ia-forge (BUG-038, 2026-09-26) : les autres joueurs qui voient cet acteur
+  // n'apprenaient sa mort que par les paquets de mouvement de son hôte, qui
+  // s'arrêtent justement à la mort : chez eux le PNJ restait « vivant » à 0 PV
+  // (fantôme qui attaque sans dégâts, puis hébergé à leur tour). On envoie
+  // l'état de mort à tous ceux qui le voient, sans téléportation ni valeurs
+  // (réservées à l'acteur lui-même).
+  // Un même joueur peut être l'hôte de plusieurs PNJ qui voient l'acteur : une seule copie par destinataire
+  // (v1 : Max recevait 5 fois la mort de Kymon).
+  DeathStateContainerMessage broadcastMsg;
+  broadcastMsg.tIsDead = respawnMsg.tIsDead;
+  std::set<MpActor*> targets;
+  for (auto listener : GetActorListeners()) {
+    auto& target = listener->GetActorToSendTo();
+    if (&target == &actorToSendTo || &target == this) {
+      continue;
+    }
+    targets.insert(&target);
+  }
+  for (auto target : targets) {
+    target->SendToUser(broadcastMsg, true);
+  }
 
   EditChangeForm([&](MpChangeForm& changeForm) {
     changeForm.isDead = isDead;

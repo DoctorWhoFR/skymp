@@ -457,6 +457,14 @@ export class FormView {
           if (forcedWeapDrawn === true || forcedWeapDrawn === false) {
             model.movement.isWeapDrawn = forcedWeapDrawn;
           }
+          // ia-forge (BUG-038, 2026-09-26) : l'état de mort du serveur (propriété isDead) fait foi. Depuis que le
+          // serveur l'envoie à tous, un mouvement en retard de l'hôte (ou du joueur lui-même) portant encore
+          // isDead=false arrivait APRÈS la mort appliquée ici : applyDeathState « ressuscitait » l'acteur, levait
+          // RespawnNeededError, la vue était détruite et, l'acteur étant mort, jamais recréée : corps disparu
+          // (PNJ « depop », joueur à terre introuvable, donc impossible à relever).
+          if (model.isDead && !model.movement.isDead) {
+            model.movement.isDead = true;
+          }
           try {
             applyMovement(refr, model.movement, !!model.isMyClone);
           } catch (e) {
