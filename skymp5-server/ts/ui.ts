@@ -49,7 +49,7 @@ const createApp = (getOriginPort: () => number) => {
   router.get(new RegExp("\.es[mpl]"), (ctx: any) => ctx.throw(403));
   router.get(new RegExp("\.bsa"), (ctx: any) => ctx.throw(403));
 
-  router.post("/rpc/:rpcClassName", (ctx: any) => {
+  router.post("/rpc/:rpcClassName", async (ctx: any) => {
     const { rpcClassName } = ctx.params;
     const { payload } = ctx.request.body;
 
@@ -58,7 +58,8 @@ const createApp = (getOriginPort: () => number) => {
 
     try {
       if (gScampServer.onHttpRpcRunAttempt) {
-        ctx.body = gScampServer.onHttpRpcRunAttempt(rpcClassName, payload);
+        // ia-forge: the gamemode may answer asynchronously (database-backed accounts).
+        ctx.body = await gScampServer.onHttpRpcRunAttempt(rpcClassName, payload);
       }
     } finally {
       endTimer();

@@ -974,6 +974,10 @@ export class RemoteServer extends ClientListener {
 
       if (msg.data.interruptCast) {
         interruptCast(ac.getFormID(), msg.data.castingSource, actorAnimationVariables);
+        // ia-forge (2026-09-29) : interruptCast de Skyrim Platform abandonne en silence si l'état d'animation reçu ne
+        // s'applique pas ; un sort à maintenir continuait alors chez nous. L'arrêt standard du jeu, sans condition.
+        ac.interruptCast();
+        gmTrace("combat", `arrêt de sort reçu pour ${msg.data.caster.toString(16)}`, { source: msg.data.castingSource });
         return;
       }
 

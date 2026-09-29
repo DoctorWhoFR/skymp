@@ -405,7 +405,8 @@ export class FormView {
     // ia-forge : trace de chaque perso distant toutes les 2 s (mode débogage, catégorie « pnj ») pour comprendre les
     // PNJ « figés » vus par un joueur quand un autre les héberge (essai S1 à deux, 2026-09-25) : drapeau
     // isHostedByOther, hébergé par moi, mouvements reçus / appliqués, position voulue / réelle, combat.
-    if (gmDebugOn("pnj") && Date.now() - this.pnjTraceAt > 2000) {
+    // ia-forge (2026-09-29) : acteurs seulement ; tous les objets visibles donnaient ~55 traces/s depuis le tri du monde.
+    if (gmDebugOn("pnj") && Date.now() - this.pnjTraceAt > 2000 && Actor.from(refr)) {
       this.pnjTraceAt = Date.now();
       try {
         const a = Actor.from(refr);

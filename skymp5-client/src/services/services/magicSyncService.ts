@@ -5,6 +5,8 @@ import { localIdToRemoteId, remoteIdToLocalId } from "../../view/worldViewMisc";
 import { SpellCastEvent, Actor, printConsole, Game, getAnimationVariablesFromActor, ActorAnimationVariables, SpellType, SlotType, EquippedItemType } from 'skyrimPlatform'
 import { ClientListener, CombinedController, Sp } from './clientListener';
 import { logTrace } from '../../logging';
+import { gmTrace } from '../../debugTrace';
+import { RemoteServer } from "./remoteServer";
 
 import { MsgType } from "../../messages";
 import { SpellCastMsgData, SpellCastMessage } from "../messages/spellCastMessage";
@@ -28,6 +30,8 @@ export class MagicSyncService extends ClientListener {
     }
 
     private onUpdate() {
+        this.sendInterruptWhenCastEnds();
+
         if (this.isAnyMagicStuffEquiped() === false) {
             return;
         }
@@ -66,6 +70,48 @@ export class MagicSyncService extends ClientListener {
         });
 
         this.lastSpellCastEventMsg = msg;
+        this.castSeen = false;
+        this.notCastingSince = 0;
+    }
+
+    // ia-forge (2026-09-29) : l'arrêt d'un sort n'était envoyé que sur l'événement d'animation « arme de nouveau en main »
+    // (onSendAnimationEventLeave), qui ne passe pas toujours : un sort à maintenir (Flammes, Guérison) relâché restait
+    // actif chez les autres joueurs. On envoie aussi l'arrêt dès que le lanceur a été vu en train de lancer puis ne
+    // lance plus depuis 150 ms ; si l'arrêt est déjà parti par l'autre chemin, rien de plus.
+    private sendInterruptWhenCastEnds() {
+        const msg = this.lastSpellCastEventMsg;
+        if (!msg || msg.interruptCast) {
+            return;
+        }
+        const ac = Actor.from(Game.getFormEx(this.casterLocalId(msg)));
+        if (!ac) {
+            return;
+        }
+        const casting = ac.getAnimationVariableBool("IsCastingRight")
+            || ac.getAnimationVariableBool("IsCastingLeft")
+            || ac.getAnimationVariableBool("IsCastingDual");
+        if (casting) {
+            this.castSeen = true;
+            this.notCastingSince = 0;
+            return;
+        }
+        if (!this.castSeen) {
+            return;
+        }
+        if (!this.notCastingSince) {
+            this.notCastingSince = Date.now();
+            return;
+        }
+        if (Date.now() - this.notCastingSince < 150) {
+            return;
+        }
+        msg.interruptCast = true;
+        msg.actorAnimationVariables = this.getAnimationVariablesFromActorConverted(ac.getFormID());
+        gmTrace("combat", `arrêt de sort envoyé (plus en train de lancer)`, { caster: msg.caster.toString(16) });
+        this.controller.emitter.emit("sendMessage", {
+            message: { t: MsgType.SpellCast, data: msg },
+            reliability: "reliable"
+        });
     }
 
     private onSendAnimationEventLeave(ctx: { animEventName: string, animationSucceeded: boolean }) {
@@ -81,7 +127,8 @@ export class MagicSyncService extends ClientListener {
 
             let msg: SpellCastMsgData = this.lastSpellCastEventMsg;
             msg.interruptCast = true;
-            msg.actorAnimationVariables = this.getAnimationVariablesFromActorConverted(remoteIdToLocalId(this.lastSpellCastEventMsg.caster));
+            gmTrace("combat", "arrêt de sort envoyé (animation)", { caster: msg.caster.toString(16) });
+            msg.actorAnimationVariables = this.getAnimationVariablesFromActorConverted(this.casterLocalId(msg));
 
             this.controller.emitter.emit("sendMessage", {
                 message: { t: MsgType.SpellCast, data: msg },
@@ -89,6 +136,13 @@ export class MagicSyncService extends ClientListener {
             });
         });
 
+    }
+
+    // ia-forge (2026-09-29) : notre propre personnage n'a pas de vue (formViews) : remoteIdToLocalId de notre id serveur
+    // rend 0, getAnimationVariablesFromActor(0) rend undefined et l'arrêt plantait avant d'être envoyé.
+    private casterLocalId(msg: SpellCastMsgData): number {
+        const remote = this.controller.lookupListener(RemoteServer).getMyRemoteRefrId();
+        return msg.caster === remote ? this.playerId : remoteIdToLocalId(msg.caster);
     }
 
     private getSpellCastEventData(e: SpellCastEvent, isInterruptCast: boolean): SpellCastMsgData {
@@ -177,5 +231,7 @@ export class MagicSyncService extends ClientListener {
     private playerId = 0x14;
     private sendUpdateAnimationVariablesRateMs = 500;
     private lastSpellCastEventMsg: SpellCastMsgData | null = null;
+    private castSeen = false;
+    private notCastingSince = 0;
     private lastSendUpdateAnimationVariables: number = 0;
 }
