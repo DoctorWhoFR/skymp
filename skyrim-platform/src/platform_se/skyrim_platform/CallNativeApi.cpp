@@ -112,8 +112,13 @@ Napi::Value CallNativeImpl(
   };
 
   auto f = provider.GetFunctionInfo(className, functionName);
-  auto isAddOrRemove =
-    (functionName == "removeItem") || (functionName == "addItem");
+  // ia-forge (2026-09-29): the latent path (DispatchMethodCall2) packs object
+  // arguments (Form, ObjectReference) in a way the VM rejects ("Type mismatch
+  // for argument 1" in Papyrus.0.log) and the promise resolves to None without
+  // the function ever running. addItem/removeItem were already routed through
+  // the direct call for that reason; dropObject gets the same treatment.
+  auto isAddOrRemove = (functionName == "removeItem") ||
+    (functionName == "addItem") || (functionName == "dropObject");
 
   if (f && f->IsLatent() && !isAddOrRemove) {
 
