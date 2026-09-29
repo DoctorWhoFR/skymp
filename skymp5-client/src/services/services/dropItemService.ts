@@ -1,15 +1,23 @@
-import { Actor, ContainerChangedEvent } from "skyrimPlatform";
+import { Actor, ContainerChangedEvent, storage } from "skyrimPlatform";
 import { ClientListener, CombinedController, Sp } from "./clientListener";
 
 import { MsgType } from "../../messages";
 import { SweetTaffySweetCantDropService } from "./sweetTaffySweetCantDropService";
 import { WorldCleanerService } from "./worldCleanerService";
 import { logTrace } from "../../logging";
+import { gmTrace } from "../../debugTrace";
 
 export class DropItemService extends ClientListener {
     constructor(private sp: Sp, private controller: CombinedController) {
         super();
         controller.on('containerChanged', (e) => this.onContainerChanged(e));
+    }
+
+    // ia-forge (2026-09-29): the gamemode's bag is a CEF page, not the InventoryMenu; it stores the time of its
+    // dropObject in storage["gmDropAt"] so that the drop is reported to the server as well.
+    private droppedFromGamemodeBag(): boolean {
+        const at = "gmDropAt" in storage ? Number(storage["gmDropAt"]) : 0;
+        return Date.now() - at < 2000;
     }
 
     private onContainerChanged(e: ContainerChangedEvent) {
@@ -23,8 +31,16 @@ export class DropItemService extends ClientListener {
         const isReference: boolean = e.reference !== null;
         if (e.newContainer && e.newContainer.getFormID() === pl.getFormID())
             return;
-        if (!this.sp.Ui.isMenuOpen("InventoryMenu"))
+        const fromBag = this.droppedFromGamemodeBag();
+        if (!this.sp.Ui.isMenuOpen("InventoryMenu") && !fromBag)
             return;
+        if (fromBag) {
+            gmTrace("inventory", "chute vue par SkyMP", {
+                base: e.baseObj ? e.baseObj.getFormID().toString(16) : null,
+                isPlayer, noContainer, isReference,
+                reference: e.reference ? e.reference.getFormID().toString(16) : String(e.reference),
+            });
+        }
         if (
             isPlayer &&
             isReference &&
@@ -72,8 +88,10 @@ export class DropItemService extends ClientListener {
             });
 
             if (!numFound) {
+                gmTrace("inventory", "chute ignorée : objet posé introuvable autour", { candidates: set.size });
                 return logTrace(this, "Ignoring item drop as false positive");
             }
+            gmTrace("inventory", "chute envoyée au serveur", { base: baseId.toString(16), count: e.numItems, found: numFound });
 
             const t = MsgType.DropItem;
             const count = e.numItems;
