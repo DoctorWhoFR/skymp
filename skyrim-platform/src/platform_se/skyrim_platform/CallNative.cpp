@@ -440,19 +440,26 @@ CallNative::AnySafe CallNative::CallNativeSafe(Arguments& args_)
 
   if (IsDropObject(className, classFunc, rawSelf)) {
 
-    if (auto refr = reinterpret_cast<RE::TESObjectREFR*>(rawSelf)) {
+    auto obj = std::get<CallNative::ObjectPtr>(args_.args[0]);
+    int32_t count = std::get<double>(args_.args[1]);
+    auto boundObject = obj
+      ? reinterpret_cast<RE::TESBoundObject*>(obj->GetNativeObjectPtr())
+      : nullptr;
+    if (!boundObject || count <= 0)
+      return ObjectPtr();
 
-      auto obj = std::get<CallNative::ObjectPtr>(args_.args[0]);
-      int32_t count = std::get<double>(args_.args[1]);
-
-      RE::TESBoundObject* boundObject = obj
-        ? reinterpret_cast<RE::TESBoundObject*>(obj->GetNativeObjectPtr())
-        : nullptr;
-
-      if (boundObject && count > 0)
-        refr->RemoveItem(boundObject, count, RE::ITEM_REMOVE_REASON::kDropping,
+    // JS runs on a worker thread; dropping casts a Havok ray to place the
+    // item, which crashes off the game thread (CrashLogger 29/09: bhkWorldM,
+    // hkpAllRayHitTempCollector). Done on the game thread, like pushActorAway.
+    const auto refrId = rawSelf->GetFormID();
+    const auto objId = boundObject->GetFormID();
+    gameThrQ.AddTask([refrId, objId, count](Viet::Void) {
+      auto refr = RE::TESForm::LookupByID<RE::TESObjectREFR>(refrId);
+      auto bound = RE::TESForm::LookupByID<RE::TESBoundObject>(objId);
+      if (refr && bound)
+        refr->RemoveItem(bound, count, RE::ITEM_REMOVE_REASON::kDropping,
                          nullptr, nullptr);
-    }
+    });
     return ObjectPtr();
   }
 
