@@ -223,6 +223,18 @@ bool IsRemoveItem(const std::string& className, const std::string& classFunc,
     !stricmp(classFunc.data(), "removeItem") && rawSelf &&
     IsActorOrObjectRefr(rawSelf->formType.get());
 }
+
+// ia-forge (2026-09-29): DropObject is latent and the latent dispatch rejects
+// object arguments ("Type mismatch for argument 1", see docs/71 in the
+// gamemode repository). Done in the engine directly, the vanilla way
+// (RemoveItem with kDropping: physics, item data kept), like addItem above.
+bool IsDropObject(const std::string& className, const std::string& classFunc,
+                  RE::TESForm* rawSelf)
+{
+  return IsActorOrObjectRefr(className) &&
+    !stricmp(classFunc.data(), "dropObject") && rawSelf &&
+    IsActorOrObjectRefr(rawSelf->formType.get());
+}
 }
 
 CallNative::AnySafe CallNative::CallNativeSafe(Arguments& args_)
@@ -422,6 +434,24 @@ CallNative::AnySafe CallNative::CallNativeSafe(Arguments& args_)
       if (boundObject)
         actor->RemoveItem(boundObject, count, RE::ITEM_REMOVE_REASON::kRemove,
                           nullptr, refrToMove);
+    }
+    return ObjectPtr();
+  }
+
+  if (IsDropObject(className, classFunc, rawSelf)) {
+
+    if (auto refr = reinterpret_cast<RE::TESObjectREFR*>(rawSelf)) {
+
+      auto obj = std::get<CallNative::ObjectPtr>(args_.args[0]);
+      int32_t count = std::get<double>(args_.args[1]);
+
+      RE::TESBoundObject* boundObject = obj
+        ? reinterpret_cast<RE::TESBoundObject*>(obj->GetNativeObjectPtr())
+        : nullptr;
+
+      if (boundObject && count > 0)
+        refr->RemoveItem(boundObject, count, RE::ITEM_REMOVE_REASON::kDropping,
+                         nullptr, nullptr);
     }
     return ObjectPtr();
   }
