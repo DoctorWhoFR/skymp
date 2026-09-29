@@ -1,0 +1,147 @@
+# ia-forge : compile Skyrim Platform + skymp5-client.js seulement (pas le serveur, pas les tests) et publie
+# la release client « ia-forge-client-N » lue par le launcher (launcher/client-release.txt).
+# Repris du workflow « HDN - Build SkyrimPlatform.dll » (Hijos de las Nieves) : cible skyrim-platform seule,
+# cache vcpkg_installed et cache de l'arbre MSBuild (un .cpp modifié = recompilation de ce fichier, pas de tout).
+name: ia-forge client (Skyrim Platform)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ ia-forge ]
+    paths:
+      - 'skyrim-platform/**'
+      - 'skymp5-client/**'
+      - 'vcpkg.json'
+      - 'vcpkg-configuration.json'
+      - '.github/workflows/ia-forge-client.yml'
+
+concurrency:
+  group: ia-forge-client-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  BUILD_TYPE: Release
+  VCPKG_BINARY_SOURCES: 'clear;nuget,GitHub,readwrite'
+  VCPKG_FEATURE_FLAGS: 'manifests'
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Cache yarn
+        uses: actions/cache@v4
+        with:
+          path: |
+            **/node_modules
+            ~/AppData/Local/Yarn/Cache
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+
+      - name: Build skymp5-client.js
+        shell: pwsh
+        run: |
+          cd skymp5-client
+          yarn --frozen-lockfile
+          yarn build
+
+      - name: Move vcpkg to C:/vcpkg
+        shell: pwsh
+        run: |
+          if (Test-Path C:/vcpkg) { Remove-Item -Recurse -Force C:/vcpkg }
+          Move-Item -Path .\vcpkg -Destination C:/vcpkg
+          C:/vcpkg/bootstrap-vcpkg.bat
+
+      - name: NuGet credentials for the vcpkg binary cache
+        shell: pwsh
+        run: |
+          $nuget = & C:/vcpkg/vcpkg.exe fetch nuget | Select-Object -Last 1
+          & $nuget sources add `
+            -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" `
+            -StorePasswordInClearText `
+            -Name "GitHub" `
+            -Username "${{ github.repository_owner }}" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" `
+            -Source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json"
+
+      - name: Cache vcpkg_installed
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: sp-vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '**/vcpkg.json') }}
+          restore-keys: |
+            sp-vcpkg-${{ runner.os }}-
+
+      - name: Cache build tree (MSBuild incremental)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/CMakeFiles
+            build/CMakeCache.txt
+            build/_deps
+            build/skyrim-platform
+            build/skymp5-client
+          key: sp-buildtree-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            sp-buildtree-${{ runner.os }}-
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+            -DVCPKG_ROOT=C:/vcpkg `
+            -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE `
+            -DBUILD_UNIT_TESTS=OFF `
+            -DDOWNLOAD_SKYRIM_DATA=OFF `
+            -DBUILD_NODEJS=OFF `
+            -DSKYRIM_VR=OFF
+
+      - name: Build skyrim-platform
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target skyrim-platform --parallel 4 -- /m:4 /nr:false
+
+      - name: Check the client tree
+        shell: pwsh
+        run: |
+          $dll = "build/dist/client/Data/SKSE/Plugins/SkyrimPlatform.dll"
+          $js = "build/dist/client/Data/Platform/Plugins/skymp5-client.js"
+          foreach ($f in @($dll, $js)) {
+            if (-not (Test-Path $f)) {
+              Write-Error "$f manquant"
+              Get-ChildItem -Recurse build/dist/client/Data | Select-Object -First 80 | ForEach-Object { Write-Host $_.FullName }
+              exit 1
+            }
+            Write-Host "OK: $f ($((Get-Item $f).Length) octets)"
+          }
+
+      - name: Package skymp-client.zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "build/dist/client/*" -DestinationPath skymp-client.zip -CompressionLevel Optimal
+          $sha1 = (Get-FileHash -Algorithm SHA1 skymp-client.zip).Hash.ToLower()
+          "$sha1  skymp-client.zip" | Out-File -Encoding ascii -NoNewline skymp-client.zip.sha1
+          Write-Host "sha1 $sha1, $((Get-Item skymp-client.zip).Length) octets"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "ia-forge-client-${{ github.run_number }}"
+          gh release create $tag skymp-client.zip skymp-client.zip.sha1 `
+            --repo "${{ github.repository }}" --target "${{ github.sha }}" --prerelease `
+            --title "ia-forge client $tag" `
+            --notes "Skyrim Platform + skymp5-client.js compilés depuis ${{ github.sha }} (branche ia-forge, cible skyrim-platform seule)."
