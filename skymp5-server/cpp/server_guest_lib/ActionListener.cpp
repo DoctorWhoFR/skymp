@@ -1,4 +1,5 @@
 #include "ActionListener.h"
+#include "formulas/TES5DamageFormula.h"
 #include "AnimationSystem.h"
 #include "ConditionsEvaluator.h"
 #include "ConsoleCommands.h"
@@ -563,9 +564,49 @@ void ActionListener::OnDropItem(const RawMessageData& rawMsgData,
                          ac->GetFormId());
   }
 
+  // ia-forge: the message carries only baseId and count. A plain entry used to
+  // be required, so an item with extra data (tempered, enchanted, renamed…)
+  // could not be dropped at all. Take a plain copy first, else one with extra
+  // data (unworn first), and drop that very copy.
   Inventory::Entry entry;
   entry.baseId = baseId;
   entry.count = msg.count;
+
+  const Inventory::Entry* chosen = nullptr;
+  // The copy named by the client (the gamemode's bag) comes first.
+  if (msg.health || msg.enchantmentId || msg.poisonId || msg.name) {
+    auto tenths = [](std::optional<float> h) {
+      return static_cast<int>(std::lround(std::max(h.value_or(1.f), 1.f) * 10));
+    };
+    for (auto& e : ac->GetInventory().entries) {
+      if (e.baseId == baseId && e.count >= msg.count &&
+          tenths(e.health) == tenths(msg.health) &&
+          e.enchantmentId.value_or(0) == msg.enchantmentId.value_or(0) &&
+          e.poisonId.value_or(0) == msg.poisonId.value_or(0) &&
+          (!msg.name || e.name == msg.name)) {
+        chosen = &e;
+        break;
+      }
+    }
+  }
+  for (int pass = 0; pass < 3 && !chosen; ++pass) {
+    for (auto& e : ac->GetInventory().entries) {
+      if (e.baseId != baseId || e.count < msg.count) {
+        continue;
+      }
+      Inventory::Entry plain(e.baseId, e.count);
+      bool isPlain = e.EqualExceptCount(plain);
+      bool isWorn = e.GetWorn() != Inventory::Worn::None;
+      if ((pass == 0 && isPlain) || (pass == 1 && !isWorn) || pass == 2) {
+        chosen = &e;
+        break;
+      }
+    }
+  }
+  if (chosen) {
+    entry = *chosen;
+    entry.count = msg.count;
+  }
 
   ac->DropItem(baseId, entry);
 }
@@ -1394,6 +1435,32 @@ void ActionListener::OnWeaponHit(MpActor* aggressor,
   }
 
   float damage = partOne.CalculateDamage(*aggressor, targetActor, hitData);
+
+  // ia-forge: what the hit was made of, for the combat log (docs/91), read
+  // before the charge and the poison are spent.
+  nlohmann::json hitLog = { { "target", targetActor.GetFormId() },
+                            { "source", hitData.source },
+                            { "power", hitData.isPowerAttack },
+                            { "sneak", hitData.isSneakAttack },
+                            { "bash", hitData.isBashAttack },
+                            { "blocked", hitData.isHitBlocked } };
+  if (!isUnarmed) {
+    const Inventory::Entry* copy =
+      IaForgeArmament::FindWieldedCopy(*aggressor, hitData.source);
+    try {
+      auto weap =
+        espm::GetData<espm::WEAP>(hitData.source, &partOne.worldState);
+      if (weap.weapData) {
+        hitLog["base"] = weap.weapData->damage;
+      }
+    } catch (...) {
+    }
+    hitLog["temper"] = IaForgeArmament::WeaponTemperBonus(copy);
+    hitLog["magic"] = hitData.isHitBlocked
+      ? 0.f
+      : IaForgeArmament::OnHitMagicDamage(copy, &partOne.worldState);
+    IaForgeArmament::ConsumeOnHit(*aggressor, hitData.source);
+  }
   damage = damage < 0.f ? 0.f : damage;
   float outBaseHealth = 0.f;
   currentActorValues.healthPercentage = CalculateCurrentHealthPercentage(
@@ -1408,6 +1475,14 @@ void ActionListener::OnWeaponHit(MpActor* aggressor,
     currentActorValues, aggressor,
     std::vector<espm::ActorValue>{ espm::ActorValue::Health });
   aggressor->SetLastHitTime(targetActor.GetFormId(), currentHitTime);
+
+  hitLog["damage"] = damage;
+  hitLog["healthBefore"] = healthPercentage;
+  hitLog["healthAfter"] = currentActorValues.healthPercentage;
+  hitLog["baseHealth"] = outBaseHealth;
+  CustomEvent(aggressor->GetFormId(), "onIaForgeHit",
+              nlohmann::json::array({ hitLog }).dump())
+    .Fire(&partOne.worldState);
 
   spdlog::debug(
     "OnWeaponHit - Target {0:x} is hit by {1} damage. Percentage was: {3}, "

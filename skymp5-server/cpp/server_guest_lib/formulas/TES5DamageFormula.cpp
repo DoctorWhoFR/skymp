@@ -65,7 +65,10 @@ float TES5DamageFormulaImpl::GetBaseWeaponDamage() const
 float TES5DamageFormulaImpl::CalcWeaponRating() const
 {
   // TODO(#457): take other components into account
-  return GetBaseWeaponDamage();
+  // ia-forge: plus the tempering of the copy wielded (docs/91).
+  return GetBaseWeaponDamage() +
+    IaForgeArmament::WeaponTemperBonus(
+           IaForgeArmament::FindWieldedCopy(aggressor, hitData.source));
 }
 
 float TES5DamageFormulaImpl::CalcMagicEffects(const Effects& effects) const
@@ -96,6 +99,25 @@ float TES5DamageFormulaImpl::CalcArmorRatingComponent(
       const auto enchantmentData =
         espm::GetData<espm::ENCH>(armorData.enchantmentFormId, espmProvider);
       ac += CalcMagicEffects(enchantmentData.effects);
+    }
+
+    // ia-forge: the worn copy's own tempering and enchantment (docs/91),
+    // counted only if the server inventory holds that copy.
+    const Inventory::Entry* copy = IaForgeArmament::FindWieldedCopy(
+      target, opponentEquipmentEntry.baseId);
+    if (copy) {
+      uint32_t slots = armorData.bod2.present ? armorData.bod2.bodyPartFlags
+                                              : armorData.bodt.bodyPartFlags;
+      ac += IaForgeArmament::ArmorTemperBonus(*copy, slots);
+      if (copy->enchantmentId && !armorData.enchantmentFormId) {
+        auto res =
+          espmProvider->GetEspm().GetBrowser().LookupById(*copy->enchantmentId);
+        if (res.rec && res.rec->GetType() == espm::ENCH::kType) {
+          ac += CalcMagicEffects(
+            espm::GetData<espm::ENCH>(*copy->enchantmentId, espmProvider)
+              .effects);
+        }
+      }
     }
 
     return ac;
@@ -160,6 +182,14 @@ float TES5DamageFormulaImpl::CalculateDamage() const
   if (hitData.isSneakAttack) {
     // TODO(GM-613): get from GameSettings
     damage *= 1.3f;
+  }
+
+  // ia-forge: enchantment and poison of the wielded copy, magic damage that
+  // armour does not reduce (docs/91).
+  if (!IsUnarmedAttack(hitData.source) && !hitData.isHitBlocked) {
+    damage += IaForgeArmament::OnHitMagicDamage(
+      IaForgeArmament::FindWieldedCopy(aggressor, hitData.source),
+      espmProvider);
   }
 
   return damage;
@@ -245,4 +275,192 @@ float TES5DamageFormula::CalculateDamage(
 {
   return internal::TES5SpellDamageFormulaImpl(aggressor, target, spellCastData)
     .CalculateDamage();
+}
+
+// ---- ia-forge armament (docs/91) ----
+
+#include "MpActor.h"
+#include "WorldState.h"
+#include "libespm/espm.h"
+#include <cmath>
+#include <spdlog/spdlog.h>
+
+IaForgeArmamentSettings& IaForgeArmamentSettings::Get()
+{
+  static IaForgeArmamentSettings g_settings;
+  return g_settings;
+}
+
+void IaForgeArmamentSettings::Load(const nlohmann::json& j)
+{
+  auto& s = Get();
+  if (!j.is_object()) {
+    return;
+  }
+  auto read = [&](const char* key, float& out) {
+    if (j.contains(key) && j[key].is_number()) {
+      out = j[key].get<float>();
+    }
+  };
+  read("weaponPerTenth", s.weaponPerTenth);
+  read("armorPerTenth", s.armorPerTenth);
+  read("bodyArmorMult", s.bodyArmorMult);
+  read("enchantChargePerHit", s.enchantChargePerHit);
+}
+
+namespace IaForgeArmament {
+
+namespace {
+constexpr uint32_t kBodySlot = 1u << 2; // biped slot 32
+
+// Same copy, whatever the client did with charge, doses or worn flags since.
+bool SameCopy(const Inventory::Entry& a, const Inventory::Entry& b)
+{
+  return a.baseId == b.baseId &&
+    TemperTenths(a) == TemperTenths(b) &&
+    a.enchantmentId.value_or(0) == b.enchantmentId.value_or(0) &&
+    a.name.value_or("") == b.name.value_or("") &&
+    a.poisonId.value_or(0) == b.poisonId.value_or(0);
+}
+
+bool IsHealthDamage(uint32_t mgefId, WorldState* espmProvider)
+{
+  auto res = espmProvider->GetEspm().GetBrowser().LookupById(mgefId);
+  if (!res.rec || res.rec->GetType() != espm::MGEF::kType) {
+    return false;
+  }
+  auto data = espm::GetData<espm::MGEF>(mgefId, espmProvider).data;
+  bool valueMod = data.effectType == espm::MGEF::EffectType::ValueMod ||
+    data.effectType == espm::MGEF::EffectType::ValueAndParts ||
+    data.effectType == espm::MGEF::EffectType::PeakValueMod;
+  return valueMod && data.primaryAV == espm::ActorValue::Health &&
+    data.IsFlagSet(espm::MGEF::Flags::Detrimental);
+}
+}
+
+int TemperTenths(const Inventory::ExtraData& e)
+{
+  float h = e.health.value_or(1.f);
+  return std::max(0, static_cast<int>(std::lround((h - 1.f) * 10.f)));
+}
+
+const Inventory::Entry* FindWieldedCopy(const MpActor& actor, uint32_t baseId)
+{
+  const auto& inv = actor.GetInventory().entries;
+  for (auto& worn : actor.GetEquipment().inv.entries) {
+    if (worn.baseId != baseId) {
+      continue;
+    }
+    for (auto& e : inv) {
+      if (e.count > 0 && SameCopy(e, worn)) {
+        return &e;
+      }
+    }
+  }
+  // Nothing matching: the plain copy, as SkyMP always assumed.
+  return nullptr;
+}
+
+float WeaponTemperBonus(const Inventory::Entry* copy)
+{
+  if (!copy) {
+    return 0.f;
+  }
+  return TemperTenths(*copy) * IaForgeArmamentSettings::Get().weaponPerTenth;
+}
+
+float ArmorTemperBonus(const Inventory::Entry& worn, uint32_t bodyPartFlags)
+{
+  const auto& s = IaForgeArmamentSettings::Get();
+  float mult = (bodyPartFlags & kBodySlot) ? s.bodyArmorMult : 1.f;
+  return TemperTenths(worn) * s.armorPerTenth * mult;
+}
+
+float HealthDamageOf(uint32_t enchOrAlchId, WorldState* espmProvider)
+{
+  if (!enchOrAlchId || !espmProvider) {
+    return 0.f;
+  }
+  try {
+    auto res = espmProvider->GetEspm().GetBrowser().LookupById(enchOrAlchId);
+    if (!res.rec) {
+      return 0.f;
+    }
+    std::vector<espm::Effects::Effect> effects;
+    if (res.rec->GetType() == espm::ENCH::kType) {
+      effects = espm::GetData<espm::ENCH>(enchOrAlchId, espmProvider).effects;
+    } else if (res.rec->GetType() == espm::ALCH::kType) {
+      effects = espm::GetData<espm::ALCH>(enchOrAlchId, espmProvider).effects;
+    } else {
+      return 0.f;
+    }
+    float total = 0.f;
+    for (auto& e : effects) {
+      uint32_t mgef = res.ToGlobalId(e.effectId);
+      if (IsHealthDamage(mgef, espmProvider)) {
+        total += e.magnitude * std::max<uint32_t>(1, e.duration);
+      }
+    }
+    return total;
+  } catch (std::exception& e) {
+    spdlog::warn("IaForgeArmament::HealthDamageOf {:x}: {}", enchOrAlchId,
+                 e.what());
+    return 0.f;
+  }
+}
+
+float OnHitMagicDamage(const Inventory::Entry* copy, WorldState* espmProvider)
+{
+  if (!copy) {
+    return 0.f;
+  }
+  float damage = 0.f;
+  if (copy->enchantmentId) {
+    bool charged = !copy->maxCharge || copy->chargePercent.value_or(0) > 0;
+    if (charged) {
+      damage += HealthDamageOf(*copy->enchantmentId, espmProvider);
+    }
+  }
+  if (copy->poisonId && copy->poisonCount.value_or(1) > 0) {
+    damage += HealthDamageOf(*copy->poisonId, espmProvider);
+  }
+  return damage;
+}
+
+void ConsumeOnHit(MpActor& aggressor, uint32_t baseId)
+{
+  const Inventory::Entry* copy = FindWieldedCopy(aggressor, baseId);
+  if (!copy || (!copy->maxCharge && !copy->poisonId)) {
+    return;
+  }
+  Inventory inv = aggressor.GetInventory();
+  for (auto& e : inv.entries) {
+    if (&e - inv.entries.data() !=
+        copy - aggressor.GetInventory().entries.data()) {
+      continue;
+    }
+    if (e.count != 1) {
+      // A stack of identical enchanted copies: leave it, the charge is shared.
+      return;
+    }
+    if (e.maxCharge && e.chargePercent.value_or(0) > 0) {
+      e.chargePercent = std::max(
+        0.f,
+        e.chargePercent.value_or(0) -
+          IaForgeArmamentSettings::Get().enchantChargePerHit);
+    }
+    if (e.poisonId) {
+      uint32_t left = e.poisonCount.value_or(1);
+      if (left <= 1) {
+        e.poisonId.reset();
+        e.poisonCount.reset();
+      } else {
+        e.poisonCount = left - 1;
+      }
+    }
+    aggressor.SetInventoryQuiet(inv);
+    return;
+  }
+}
+
 }

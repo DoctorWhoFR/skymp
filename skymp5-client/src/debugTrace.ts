@@ -7,7 +7,7 @@ import { storage } from "skyrimPlatform";
 import { MsgType } from "./messages";
 
 // Signature de version du client maison (lue par le gamemode : quel client tourne chez chaque joueur).
-export const CLIENT_BUILD = "ia-forge-local-23";
+export const CLIENT_BUILD = "ia-forge-local-26";
 try {
   storage["gmClientBuild"] = CLIENT_BUILD;
 } catch (e) {

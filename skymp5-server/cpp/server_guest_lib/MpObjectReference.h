@@ -135,6 +135,10 @@ public:
   void SetAnimationVariableBool(AnimationVariableBool animationVariableBool,
                                 bool value);
   void SetActivationBlocked(bool blocked);
+
+  // ia-forge: extra data (tempering, enchantment, name…) of an item dropped on
+  // the ground, given back to whoever picks it up.
+  void SetPickupExtra(const Inventory::ExtraData& extra);
   void ForceSubscriptionsUpdate();
   void SetPrimitive(const NiPoint3& boundsDiv2);
   void UpdateHoster(uint32_t newHosterId);
@@ -154,6 +158,9 @@ public:
   void RemoveFromGridAndUnsubscribeAll();
 
   void SetInventory(const Inventory& inv);
+  // ia-forge: saves without sending the inventory to the owner, for values
+  // the client keeps in step by itself (charge and poison doses after a hit).
+  void SetInventoryQuiet(const Inventory& inv);
   void AddItem(uint32_t baseId, uint32_t count);
   void AddItems(const std::vector<Inventory::Entry>& entries);
   void RemoveItem(uint32_t baseId, uint32_t count, MpObjectReference* target);
@@ -260,6 +267,7 @@ private:
   std::optional<std::chrono::system_clock::duration> relootTimeOverride;
   std::unique_ptr<uint8_t> chanceNoneOverride;
   bool activationBlocked = false;
+  std::optional<Inventory::ExtraData> pickupExtra;
 
   struct Impl;
   std::shared_ptr<Impl> pImpl;

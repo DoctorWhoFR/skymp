@@ -1,4 +1,5 @@
 #include "CallNative.h"
+#include "PapyrusTESModPlatform.h"
 #include "CallNativeApi.h"
 #include "GetNativeFunctionAddr.h"
 #include "NullPointerException.h"
@@ -458,7 +459,8 @@ CallNative::AnySafe CallNative::CallNativeSafe(Arguments& args_)
       auto bound = RE::TESForm::LookupByID<RE::TESBoundObject>(objId);
       if (refr && bound)
         refr->RemoveItem(bound, count, RE::ITEM_REMOVE_REASON::kDropping,
-                         nullptr, nullptr);
+                         TESModPlatform::TakeDropPick(refrId, objId),
+                         nullptr);
     });
     return ObjectPtr();
   }

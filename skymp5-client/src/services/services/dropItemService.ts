@@ -95,9 +95,17 @@ export class DropItemService extends ClientListener {
 
             const t = MsgType.DropItem;
             const count = e.numItems;
+            // ia-forge: which copy, when the gamemode's bag picked one among several (docs/91).
+            const copy = "gmDropCopy" in storage ? storage["gmDropCopy"] as
+                { at?: number, baseId?: number, health?: number, ench?: number, poison?: number, name?: string } : null;
+            const picked = copy && copy.baseId === baseId && Date.now() - Number(copy.at) < 2000 ? copy : null;
             this.controller.emitter.emit("sendMessage", {
                 message: {
                     t, baseId, count,
+                    ...(picked?.health ? { health: picked.health } : {}),
+                    ...(picked?.ench ? { enchantmentId: picked.ench } : {}),
+                    ...(picked?.poison ? { poisonId: picked.poison } : {}),
+                    ...(picked?.name ? { name: picked.name } : {}),
                 },
                 reliability: "reliable"
             });

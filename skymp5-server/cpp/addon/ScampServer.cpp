@@ -13,6 +13,8 @@
 #include "ScampServerListener.h"
 #include "condition_functions/ConditionFunctionFactory.h"
 #include "formulas/DamageMultConditionalFormula.h"
+#include "formulas/TES5DamageFormula.h"
+#include "formulas/TES5DamageFormula.h"
 #include "formulas/DamageMultFormula.h"
 #include "formulas/SweetPieDamageFormula.h"
 #include "formulas/SweetPieSpellDamageFormula.h"
@@ -372,6 +374,10 @@ ScampServer::ScampServer(const Napi::CallbackInfo& info)
 
     auto conditionsEvaluatorSettings =
       serverSettings["conditionsEvaluatorSettings"];
+
+    IaForgeArmamentSettings::Load(serverSettings["iaForgeArmament"]);
+
+    IaForgeArmamentSettings::Load(serverSettings["iaForgeArmament"]);
 
     std::unique_ptr<IDamageFormula> formula;
     formula = std::make_unique<TES5DamageFormula>();

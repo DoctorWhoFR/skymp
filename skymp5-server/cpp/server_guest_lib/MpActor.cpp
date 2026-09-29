@@ -1678,6 +1678,14 @@ void MpActor::DropItem(const uint32_t baseId, const Inventory::Entry& entry)
 
   placedObject->SetCount(count);
 
+  Inventory::ExtraData groundExtra = entry;
+  groundExtra.worn_.reset();
+  groundExtra.wornLeft.reset();
+  if (!Inventory::Entry(baseId, count, groundExtra)
+         .EqualExceptCount(Inventory::Entry(baseId, count))) {
+    placedObject->SetPickupExtra(groundExtra);
+  }
+
   uint32_t droppedItemFormId = placedObject->GetFormId();
 
   // Filter our dropped items queue

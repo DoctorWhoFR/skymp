@@ -683,7 +683,9 @@ void MpObjectReference::SetActivationBlocked(bool blocked)
 void MpObjectReference::ForceSubscriptionsUpdate()
 {
   auto worldState = GetParent();
-  if (!worldState || IsDisabled()) {
+  // ia-forge: a deleted actor its host keeps moving came back to everyone
+  // (/enemyclear, corpses): never put a deleted reference back on the grid.
+  if (!worldState || IsDisabled() || IsDeleted()) {
     return;
   }
   InitListenersAndEmitters();
@@ -812,6 +814,14 @@ void MpObjectReference::SetInventory(const Inventory& inv)
     changeForm.inv = inv;
   });
   SendInventoryUpdate();
+}
+
+void MpObjectReference::SetInventoryQuiet(const Inventory& inv)
+{
+  EditChangeForm([&](MpChangeFormREFR& changeForm) {
+    changeForm.baseContainerAdded = true;
+    changeForm.inv = inv;
+  });
 }
 
 void MpObjectReference::AddItem(uint32_t baseId, uint32_t count)
@@ -1353,6 +1363,11 @@ bool MpObjectReference::IsLocationSavingNeeded() const
     std::chrono::system_clock::now() - *last > std::chrono::seconds(30);
 }
 
+void MpObjectReference::SetPickupExtra(const Inventory::ExtraData& extra)
+{
+  pickupExtra = extra;
+}
+
 void MpObjectReference::GivePickupItemsToActivationSource(
   MpObjectReference& activationSource, const espm::LookupResult& base)
 {
@@ -1412,7 +1427,12 @@ void MpObjectReference::GivePickupItemsToActivationSource(
     uint32_t resultingCount =
       std::max(kCountDefault, std::max(countRecord, countChangeForm));
 
-    activationSource.AddItem(resultItem, resultingCount);
+    if (pickupExtra) {
+      activationSource.AddItems(
+        { Inventory::Entry(resultItem, resultingCount, *pickupExtra) });
+    } else {
+      activationSource.AddItem(resultItem, resultingCount);
+    }
   }
 }
 

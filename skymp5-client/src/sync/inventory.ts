@@ -113,9 +113,13 @@ const namesEqual = (a: Entry, b: Entry): boolean => {
   return false;
 };
 
+// ia-forge: the server keeps health as a 32-bit float (1.6 -> 1.600000023841858) while extractExtraData rounds it,
+// so an exact comparison made every tempered item except 1.5 look changed: re-added (and unequipped) every 5 s.
+const healthKey = (h?: number): number => (h === undefined ? 1 : Math.round(h * 10) / 10);
+
 const extrasEqual = (a: Entry, b: Entry, ignoreWorn = false) => {
   return (
-    a.health === b.health &&
+    healthKey(a.health) === healthKey(b.health) &&
     a.enchantmentId === b.enchantmentId &&
     a.maxCharge === b.maxCharge &&
     !!a.removeEnchantmentOnUnequip === !!b.removeEnchantmentOnUnequip &&
@@ -123,7 +127,8 @@ const extrasEqual = (a: Entry, b: Entry, ignoreWorn = false) => {
     //namesEqual(a, b) &&
     a.soul === b.soul &&
     a.poisonId === b.poisonId &&
-    a.poisonCount === b.poisonCount &&
+    // ia-forge: doses drop on each hit on both sides, not always in step (docs/91).
+    //a.poisonCount === b.poisonCount &&
     ((!!a.worn === !!b.worn && !!a.wornLeft === !!b.wornLeft) || ignoreWorn)
   );
 };

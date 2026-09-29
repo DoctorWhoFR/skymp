@@ -1,4 +1,5 @@
 #include "PapyrusTESModPlatform.h"
+#include <cmath>
 #include "CallNativeApi.h"
 #include "ConsoleApi.h"
 #include "ExceptionPrinter.h"
@@ -611,6 +612,71 @@ RE::ExtraDataList* CreateExtraDataList()
 }
 }
 
+namespace {
+// ia-forge (docs/91 in the gamemode repository): several copies of one
+// object differ by their extra data; the gamemode's bag names the copy.
+struct DropPick
+{
+  uint32_t refrId = 0;
+  uint32_t objId = 0;
+  RE::ExtraDataList* extraList = nullptr;
+};
+DropPick g_dropPick; // game thread only
+
+bool IsCopy(RE::ExtraDataList* xl, float health, uint32_t enchId,
+            const std::string& name, uint32_t poisonId,
+            const std::string& baseName)
+{
+  float h = 1.f;
+  uint32_t e = 0, p = 0;
+  std::string n;
+  if (xl) {
+    if (auto x = xl->GetByType<RE::ExtraHealth>())
+      h = x->health;
+    if (auto x = xl->GetByType<RE::ExtraEnchantment>())
+      e = x->enchantment ? x->enchantment->formID : 0;
+    if (auto x = xl->GetByType<RE::ExtraPoison>())
+      p = x->poison ? x->poison->formID : 0;
+    if (auto x = xl->GetByType<RE::ExtraTextDisplayData>())
+      n = x->displayName.c_str();
+  }
+  auto tenths = [](float v) { return static_cast<int>(std::lround(v * 10)); };
+  const bool nameOk = n.empty() ? (name.empty() || name == baseName)
+                                : n == name;
+  return tenths(std::max(h, 1.f)) == tenths(std::max(health, 1.f)) &&
+    e == enchId && p == poisonId && nameOk;
+}
+
+// The extra data list of the wanted copy; nullptr for a plain copy or none.
+RE::ExtraDataList* FindCopy(RE::TESObjectREFR* refr, RE::TESBoundObject* obj,
+                            float health, uint32_t enchId,
+                            const std::string& name, uint32_t poisonId)
+{
+  auto changes = refr->extraList.GetByType<RE::ExtraContainerChanges>();
+  if (!changes || !changes->changes || !changes->changes->entryList)
+    return nullptr;
+  const std::string baseName = obj->GetName() ? obj->GetName() : "";
+  for (auto entry : *changes->changes->entryList) {
+    if (!entry || entry->object != obj || !entry->extraLists)
+      continue;
+    for (auto xl : *entry->extraLists) {
+      if (IsCopy(xl, health, enchId, name, poisonId, baseName))
+        return xl;
+    }
+  }
+  return nullptr;
+}
+}
+
+RE::ExtraDataList* TESModPlatform::TakeDropPick(uint32_t refrId,
+                                                uint32_t objId)
+{
+  auto pick = g_dropPick;
+  g_dropPick = {};
+  return pick.refrId == refrId && pick.objId == objId ? pick.extraList
+                                                      : nullptr;
+}
+
 void TESModPlatform::AddItemEx(
   IVM* vm, StackID stackId, RE::StaticFunctionTag*,
   RE::TESObjectREFR* containerRefr, RE::TESForm* item, int32_t countDelta,
@@ -655,6 +721,41 @@ void TESModPlatform::AddItemEx(
 
   auto boundObject = item->As<RE::TESBoundObject>();
   if (!boundObject) {
+    return;
+  }
+
+  // ia-forge: countDelta 0 (did nothing) = act on the copy with these extras:
+  // equip it when a worn state was pushed, else pick it for the next
+  // dropObject. A new native would need the Papyrus compiler for the .pex.
+  if (countDelta == 0) {
+    const bool equip = g_worn || g_wornLeft;
+    const bool left = g_wornLeft;
+    g_worn = false;
+    g_wornLeft = false;
+    const auto objId = boundObject->GetFormID();
+    const uint32_t enchId = enchantment ? enchantment->formID : 0;
+    const uint32_t poisonId = poison ? poison->formID : 0;
+    const std::string name = textDisplayData.data();
+    g_nativeCallRequirements.gameThrQ->AddTask([=](Viet::Void) {
+      auto refr = RE::TESForm::LookupByID<RE::TESObjectREFR>(refrId);
+      auto obj = RE::TESForm::LookupByID<RE::TESBoundObject>(objId);
+      if (!refr || !obj)
+        return;
+      auto xl = FindCopy(refr, obj, health, enchId, name, poisonId);
+      if (!equip) {
+        g_dropPick = { refrId, objId, xl };
+        return;
+      }
+      auto actor = refr->As<RE::Actor>();
+      auto s = RE::ActorEquipManager::GetSingleton();
+      if (!actor || !s)
+        return;
+      RE::BGSEquipSlot* slot = nullptr;
+      if (left && obj->formType == RE::FormType::Weapon)
+        slot = reinterpret_cast<RE::BGSEquipSlot*>(
+          RE::TESForm::LookupByID(0x13f43));
+      s->EquipObject(actor, obj, xl, 1, slot);
+    });
     return;
   }
 

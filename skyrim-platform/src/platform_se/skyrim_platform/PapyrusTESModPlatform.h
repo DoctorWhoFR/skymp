@@ -109,5 +109,9 @@ bool GetPapyrusEventsBlocked();
 
 void Update();
 
+// ia-forge: the copy addItemEx(countDelta 0) picked for the next dropObject
+// of this object by this reference; game thread only.
+RE::ExtraDataList* TakeDropPick(uint32_t refrId, uint32_t objId);
+
 bool Register(IVM* vm);
 }
