@@ -1466,8 +1466,11 @@ void MpActor::Teleport(const LocationalData& position)
   GetActorToSendTo().SendToUser(msg, true);
 
   SetCellOrWorldObsolete(position.cellOrWorldDesc);
-  SetPos(position.pos);
+  // ia-forge (30/09, horses): SetPos subscribes the new neighbours, whose
+  // CreateActor message carries the angle of that moment. Set it first, or
+  // every actor placed by the gamemode is born facing north in the games.
   SetAngle(position.rot);
+  SetPos(position.pos);
 }
 
 void MpActor::SetSpawnPoint(const LocationalData& position)
