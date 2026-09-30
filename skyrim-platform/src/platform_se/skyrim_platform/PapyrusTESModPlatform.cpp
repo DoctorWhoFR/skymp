@@ -889,15 +889,56 @@ void TESModPlatform::AddItemEx(
                                             countDelta, nullptr);
       }
     } else if (countDelta < 0) {
-      RE::ExtraDataList* target = optExtraList;
-      if (entry) {
-        if (auto xl = FindCopy(containerRefr, boundObject, health, copyEnchId,
-                               copyName, copyPoisonId))
-          target = xl;
+      // The engine's RemoveItem picks any stack with equal extras whatever
+      // its name (even the worn one): take unworn stacks with this name first.
+      int32_t left = -countDelta;
+      if (entry && entry->extraLists) {
+        const std::string baseName =
+          boundObject->GetName() ? boundObject->GetName() : "";
+        auto& lists = *entry->extraLists;
+        bool again = true;
+        while (left > 0 && again) {
+          again = false;
+          auto prev = lists.cend();
+          for (auto it = lists.cbegin(); it != lists.cend(); prev = it, ++it) {
+            RE::ExtraDataList* xl = *it;
+            if (!xl || xl->HasType(RE::ExtraDataType::kWorn) ||
+                xl->HasType(RE::ExtraDataType::kWornLeft) ||
+                !IsCopy(xl, health, copyEnchId, copyName, copyPoisonId,
+                        baseName))
+              continue;
+            auto xc = xl->GetByType<RE::ExtraCount>();
+            const int32_t n = xc ? std::max<int32_t>(xc->count, 1) : 1;
+            if (n > left) {
+              xc->count = static_cast<int16_t>(n - left);
+              entry->countDelta -= left;
+              left = 0;
+              break;
+            }
+            auto next = it;
+            ++next;
+            if (prev == lists.cend())
+              lists.pop_front();
+            else
+              lists.erase_after(prev, next);
+            entry->countDelta -= n;
+            left -= n;
+            again = true;
+            break;
+          }
+        }
       }
-      containerRefr->RemoveItem(boundObject, -countDelta,
-                                RE::ITEM_REMOVE_REASON::kRemove, target,
-                                nullptr);
+      if (left > 0) {
+        RE::ExtraDataList* target = optExtraList;
+        if (entry) {
+          if (auto xl = FindCopy(containerRefr, boundObject, health,
+                                 copyEnchId, copyName, copyPoisonId))
+            target = xl;
+        }
+        containerRefr->RemoveItem(boundObject, left,
+                                  RE::ITEM_REMOVE_REASON::kRemove, target,
+                                  nullptr);
+      }
     }
   });
 
