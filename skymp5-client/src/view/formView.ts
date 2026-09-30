@@ -183,7 +183,8 @@ export class FormView {
               spawnPosition,
               spawningRefr.getFormID(),
               callback,
-              model.movement ? model.movement.worldOrCell : 0
+              model.movement ? model.movement.worldOrCell : 0,
+              model.movement ? model.movement.rot : [0, 0, 0],
             );
           }
         };

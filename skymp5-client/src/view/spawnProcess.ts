@@ -6,6 +6,7 @@ import { animTrace } from "../sync/animation";
 
 export class SpawnProcess {
   private pos: NiPoint3;
+  private rot: NiPoint3;
   private worldOrCell: number;
 
   constructor(
@@ -14,9 +15,14 @@ export class SpawnProcess {
     refrId: number,
     private callback: () => void,
     worldOrCell = 0,
+    rot: NiPoint3 = [0, 0, 0],
   ) {
     this.pos = [pos[0], pos[1], pos[2]];
     this.worldOrCell = worldOrCell;
+    // ia-forge (mounts, 30/09) : l'acteur naît sur le joueur, donc tourné comme lui, et ne prenait l'angle du
+    // serveur qu'au premier mouvement appliqué (le cheval sorti de l'écurie « se tournait » après coup, la charrette
+    // déjà posée). L'angle du serveur est appliqué à la naissance, comme la position.
+    this.rot = [rot[0], rot[1], rot[2]];
     // ia-forge : tant que la naissance n'est pas finie, sendInputsService ne doit rien envoyer pour ce PNJ (sinon
     // sa position « sur le joueur » part au serveur et devient la vraie). Liste des naissances en cours.
     SpawnProcess.setSpawning(refrId, true);
@@ -38,7 +44,7 @@ export class SpawnProcess {
         animTrace({ ev: "spawn", refr: refrId.toString(16), base: (r2.getBaseObject()?.getFormID() ?? 0).toString(16), target: pos.map(Math.round), before: before.map(Math.round), after: after.map(Math.round), dist: Math.round(dist), cell: worldOrCell.toString(16) }, "naissance");
         if (dist > 64 && worldOrCell) {
           try {
-            TESModPlatform.moveRefrToPosition(r2, Cell.from(Game.getFormEx(worldOrCell)), WorldSpace.from(Game.getFormEx(worldOrCell)), pos[0], pos[1], pos[2], 0, 0, 0);
+            TESModPlatform.moveRefrToPosition(r2, Cell.from(Game.getFormEx(worldOrCell)), WorldSpace.from(Game.getFormEx(worldOrCell)), pos[0], pos[1], pos[2], this.rot[0], this.rot[1], this.rot[2]);
             const fixed = ObjectReferenceEx.getPos(r2);
             animTrace({ ev: "spawn-fixed", refr: refrId.toString(16), dist: Math.round(ObjectReferenceEx.getDistance(fixed, pos)) }, "naissance");
           } catch (e) {
@@ -72,9 +78,10 @@ export class SpawnProcess {
     const before = ObjectReferenceEx.getPos(refr);
     const dist = ObjectReferenceEx.getDistance(before, this.pos);
     let after = before;
+    refr.setAngle(this.rot[0], this.rot[1], this.rot[2]);
     if (dist > 64 && this.worldOrCell) {
       try {
-        TESModPlatform.moveRefrToPosition(refr, Cell.from(Game.getFormEx(this.worldOrCell)), WorldSpace.from(Game.getFormEx(this.worldOrCell)), this.pos[0], this.pos[1], this.pos[2], 0, 0, 0);
+        TESModPlatform.moveRefrToPosition(refr, Cell.from(Game.getFormEx(this.worldOrCell)), WorldSpace.from(Game.getFormEx(this.worldOrCell)), this.pos[0], this.pos[1], this.pos[2], this.rot[0], this.rot[1], this.rot[2]);
         after = ObjectReferenceEx.getPos(refr);
       } catch (e) {
         animTrace({ ev: ev + "-error", refr: refrId.toString(16), error: String(e) }, "naissance");
