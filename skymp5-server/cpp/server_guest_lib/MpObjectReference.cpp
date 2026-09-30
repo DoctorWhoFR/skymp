@@ -1575,7 +1575,10 @@ void MpObjectReference::ProcessActivateNormal(
 
     constexpr float kOccupationReach = 256.f;
 
-    if (CheckIfObjectCanStartOccupyThis(activationSource, kOccupationReach)) {
+    // Benches and tables seat several people: another occupant does not block. The game picks a free seat, and the
+    // gamemode refuses in onActivate once every seat is taken. Only an actor already seated here is still refused.
+    if (this->occupant != actorActivator ||
+        CheckIfObjectCanStartOccupyThis(activationSource, kOccupationReach)) {
       if (this->occupant) {
         this->occupant->RemoveEventSink(this->occupantDestroySink);
         this->occupant->RemoveEventSink(this->occupantDisableSink);
