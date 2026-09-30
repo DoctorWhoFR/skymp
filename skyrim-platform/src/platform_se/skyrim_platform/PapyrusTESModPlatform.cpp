@@ -899,8 +899,7 @@ void TESModPlatform::AddItemEx(
         bool again = true;
         while (left > 0 && again) {
           again = false;
-          auto prev = lists.cend();
-          for (auto it = lists.cbegin(); it != lists.cend(); prev = it, ++it) {
+          for (auto it = lists.begin(); it != lists.end(); ++it) {
             RE::ExtraDataList* xl = *it;
             if (!xl || xl->HasType(RE::ExtraDataType::kWorn) ||
                 xl->HasType(RE::ExtraDataType::kWornLeft) ||
@@ -915,12 +914,10 @@ void TESModPlatform::AddItemEx(
               left = 0;
               break;
             }
-            auto next = it;
-            ++next;
-            if (prev == lists.cend())
-              lists.pop_front();
-            else
-              lists.erase_after(prev, next);
+            // BSSimpleList's const iterators do not compile: move the stack to
+            // the front, then pop it.
+            std::swap(*it, *lists.begin());
+            lists.pop_front();
             entry->countDelta -= n;
             left -= n;
             again = true;
