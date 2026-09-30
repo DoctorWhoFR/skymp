@@ -738,6 +738,13 @@ void ActionListener::OnHostAttempt(const RawMessageData& rawMsgData,
     remote.UpdateHoster(hoster);
 
     // Prevents too fast host switch
+    // ia-forge (30/09): the vector only grew on movement messages, so for an
+    // actor that never moved yet (a fresh /enemy) this wrote out of bounds and
+    // the next attempt was granted at once: two players 33 ms apart took the
+    // same NPC in turns, its AI restarting each time (broken pathfinding).
+    if (partOne.worldState.lastMovUpdateByIdx.size() <= remoteIdx) {
+      partOne.worldState.lastMovUpdateByIdx.resize(remoteIdx + 1);
+    }
     partOne.worldState.lastMovUpdateByIdx[remoteIdx] =
       std::chrono::system_clock::now();
 
