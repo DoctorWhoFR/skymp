@@ -325,12 +325,29 @@ export const getDiff = (
 };
 
 export const getInventory = (refr: ObjectReference): Inventory => {
-  return squash(
-    sumInventories(
-      getBaseContainerAsInventory(refr),
-      getExtraContainerChangesAsInventory(refr)
-    )
-  );
+  const base = getBaseContainerAsInventory(refr);
+  const res = squash(sumInventories(base, getExtraContainerChangesAsInventory(refr)));
+  const negative = res.entries.filter((e) => e.count < 0);
+  if (negative.length && refr.getFormID() === 0x14 && gmDebugOn("inventory")) {
+    const ids = new Set(negative.map((e) => e.baseId));
+    const raw = (getExtraContainerChanges(0x14) || [])
+      .filter((c) => ids.has(c.baseId))
+      .map((c) => ({
+        base: c.baseId.toString(16),
+        countDelta: c.countDelta,
+        lists: (c.extendDataList || []).map((xl) => {
+          const e: Entry = { baseId: c.baseId, count: 1 };
+          extractExtraData(refr, xl, e);
+          return { name: e.name, count: e.count, worn: !!e.worn };
+        }),
+      }));
+    gmTrace("inventory", "negative count", {
+      negative: negative.map((e) => ({ base: e.baseId.toString(16), name: e.name, count: e.count })),
+      baseContainer: base.entries.filter((e) => ids.has(e.baseId)).map((e) => e.count),
+      raw,
+    });
+  }
+  return res;
 };
 
 const basesReset = (): Set<number> => {

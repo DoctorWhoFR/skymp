@@ -8,7 +8,7 @@ import {
   setInventory,
 } from 'skyrimPlatform';
 
-import { Entry, Inventory, getInventory } from './inventory';
+import { Entry, Inventory, applyInventory, getInventory } from './inventory';
 
 export const enum SpellType {
   Left,
@@ -73,7 +73,7 @@ const removeUnnecessaryExtra = (inv: Inventory, ignoreAmmo: boolean): Inventory 
       } else {
         r.count = Ammo.from(Game.getFormEx(x.baseId)) ? 1000 : 1;
       }
-      delete r.name;
+      // ia-forge: the name is kept, the inventory apply now tells named copies apart (docs/91).
       return r;
     }),
   };
@@ -113,9 +113,13 @@ export const applyEquipment = (ac: Actor, eq: Equipment): boolean => {
 
   ac.removeAllItems(null, false, true);
 
-  const newInventory = removeUnnecessaryExtra(filterWorn(eq.inv), ac.getFormID() === 0x14);
+  const isPlayer = ac.getFormID() === 0x14;
+  const newInventory = removeUnnecessaryExtra(filterWorn(eq.inv), isPlayer);
 
-  setInventory(ac.getFormID(), newInventory);
+  // ia-forge: setInventory recreates a bare copy (no name, enchantment or tempering), which the inventory apply then
+  // takes off as a stranger: our own worn copies go through addItemEx with all their details (docs/91).
+  if (isPlayer) applyInventory(ac, newInventory, false);
+  else setInventory(ac.getFormID(), newInventory);
 
   syncSpellEquipment(ac, eq.leftSpell, SpellType.Left);
   syncSpellEquipment(ac, eq.rightSpell, SpellType.Right);
