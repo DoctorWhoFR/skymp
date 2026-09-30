@@ -641,8 +641,13 @@ bool IsCopy(RE::ExtraDataList* xl, float health, uint32_t enchId,
       n = x->displayName.c_str();
   }
   auto tenths = [](float v) { return static_cast<int>(std::lround(v * 10)); };
-  const bool nameOk = n.empty() ? (name.empty() || name == baseName)
-                                : n == name;
+  // The game pools names case-insensitively: it may hand back "test" for
+  // "Test".
+  auto same = [](const std::string& a, const std::string& b) {
+    return !_stricmp(a.c_str(), b.c_str());
+  };
+  const bool nameOk = n.empty() ? (name.empty() || same(name, baseName))
+                                : same(n, name);
   return tenths(std::max(h, 1.f)) == tenths(std::max(health, 1.f)) &&
     e == enchId && p == poisonId && nameOk;
 }
@@ -837,6 +842,12 @@ void TESModPlatform::AddItemEx(
     }
   }
 
+  const std::string copyName = textDisplayData.data();
+  const bool ownName = !copyName.empty() && boundObject->GetName() &&
+    _stricmp(copyName.c_str(), boundObject->GetName()) != 0;
+  const uint32_t copyEnchId = enchantment ? enchantment->formID : 0;
+  const uint32_t copyPoisonId = poison ? poison->formID : 0;
+
   g_nativeCallRequirements.gameThrQ->AddTask([=](Viet::Void) {
     if (containerRefr != RE::TESForm::LookupByID<RE::TESObjectREFR>(refrId))
       return;
@@ -844,12 +855,48 @@ void TESModPlatform::AddItemEx(
     auto optExtraList =
       item->formType == RE::FormType::Ammo ? nullptr : extraList;
 
+    // ia-forge (docs/91): the engine merges an added copy into a stack with the
+    // same extras but another name, so a named copy gets its own stack, and a
+    // removal takes the stack with that name.
+    RE::InventoryEntryData* entry = nullptr;
+    if (ownName && optExtraList) {
+      auto changes =
+        containerRefr->extraList.GetByType<RE::ExtraContainerChanges>();
+      if (changes && changes->changes && changes->changes->entryList) {
+        for (auto e : *changes->changes->entryList) {
+          if (e && e->object == boundObject) {
+            entry = e;
+            break;
+          }
+        }
+      }
+    }
+
     if (countDelta > 0) {
-      containerRefr->AddObjectToContainer(boundObject, optExtraList,
-                                          countDelta, nullptr);
+      if (entry) {
+        if (countDelta > 1) {
+          auto extra = RE::malloc<RE::ExtraCount>();
+          if (extra) {
+            ::new (extra) RE::ExtraCount(static_cast<int16_t>(countDelta));
+            addExtra(optExtraList,
+                     static_cast<uint32_t>(RE::ExtraDataType::kCount), extra);
+          }
+        }
+        entry->AddExtraList(optExtraList);
+        entry->countDelta += countDelta;
+      } else {
+        containerRefr->AddObjectToContainer(boundObject, optExtraList,
+                                            countDelta, nullptr);
+      }
     } else if (countDelta < 0) {
+      RE::ExtraDataList* target = optExtraList;
+      if (entry) {
+        if (auto xl = FindCopy(containerRefr, boundObject, health, copyEnchId,
+                               copyName, copyPoisonId))
+          target = xl;
+      }
       containerRefr->RemoveItem(boundObject, -countDelta,
-                                RE::ITEM_REMOVE_REASON::kRemove, optExtraList,
+                                RE::ITEM_REMOVE_REASON::kRemove, target,
                                 nullptr);
     }
   });

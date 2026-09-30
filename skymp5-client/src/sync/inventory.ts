@@ -22,6 +22,7 @@ import {
   FormType,
   Form,
 } from "skyrimPlatform";
+import { gmDebugOn, gmTrace } from "../debugTrace";
 
 export interface Extra {
   health?: number;
@@ -113,6 +114,21 @@ const namesEqual = (a: Entry, b: Entry): boolean => {
   return false;
 };
 
+// ia-forge: applyInventory writes the base name on every copy it creates, so the base name counts as no name; the
+// game also pools names case-insensitively ("test" for "Test").
+const baseNames = new Map<number, string>();
+const nameKey = (e: Entry): string => {
+  const n = (cropName(getRealName(e.name)) || "").toLowerCase();
+  if (!n) return "";
+  let base = baseNames.get(e.baseId);
+  if (base === undefined) {
+    const form = Game.getFormEx(e.baseId);
+    base = (form ? form.getName() : "").toLowerCase();
+    baseNames.set(e.baseId, base);
+  }
+  return n === base ? "" : n;
+};
+
 // ia-forge: the server keeps health as a 32-bit float (1.6 -> 1.600000023841858) while extractExtraData rounds it,
 // so an exact comparison made every tempered item except 1.5 look changed: re-added (and unequipped) every 5 s.
 const healthKey = (h?: number): number => (h === undefined ? 1 : Math.round(h * 10) / 10);
@@ -124,7 +140,7 @@ const extrasEqual = (a: Entry, b: Entry, ignoreWorn = false) => {
     a.maxCharge === b.maxCharge &&
     !!a.removeEnchantmentOnUnequip === !!b.removeEnchantmentOnUnequip &&
     //a.chargePercent === b.chargePercent &&
-    //namesEqual(a, b) &&
+    nameKey(a) === nameKey(b) &&
     a.soul === b.soul &&
     a.poisonId === b.poisonId &&
     // ia-forge: doses drop on each hit on both sides, not always in step (docs/91).
@@ -336,6 +352,23 @@ const resetBase = (refr: ObjectReference): void => {
   }
 };
 
+// The game's own stacks (one per extra data list) of the objects about to be re-applied, to see what the engine merged.
+const traceGameCopies = (refr: ObjectReference, diff: Entry[]): void => {
+  const ids = new Set(diff.map((e) => e.baseId));
+  const game: Record<string, unknown>[] = [];
+  (getExtraContainerChanges(refr.getFormID()) || []).forEach((c) => {
+    if (!ids.has(c.baseId)) return;
+    const lists = (c.extendDataList || []).map((xl) => {
+      const e: Entry = { baseId: c.baseId, count: 1 };
+      extractExtraData(refr, xl, e);
+      return { name: e.name, count: e.count, worn: !!e.worn };
+    });
+    game.push({ base: c.baseId.toString(16), countDelta: c.countDelta, lists });
+  });
+  const want = diff.map((e) => ({ base: e.baseId.toString(16), name: e.name, count: e.count }));
+  gmTrace("inventory", "re-apply", { want, game });
+};
+
 export const applyInventory = (
   refr: ObjectReference,
   newInventory: Inventory,
@@ -344,6 +377,7 @@ export const applyInventory = (
 ): boolean => {
   resetBase(refr);
   const diff = getDiff(newInventory, getInventory(refr), ignoreWorn).entries;
+  if (diff.length && refr.getFormID() === 0x14 && gmDebugOn("inventory")) traceGameCopies(refr, diff);
 
   let res = true;
 
