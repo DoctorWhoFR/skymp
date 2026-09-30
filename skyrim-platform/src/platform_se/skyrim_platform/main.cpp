@@ -13,6 +13,7 @@
 #include "Hooks.h"
 #include "IPC.h"
 #include "InputConverter.h"
+#include "ObjectReferenceApi.h"
 #include "PapyrusTESModPlatform.h"
 #include "Settings.h"
 #include "SkyrimPlatform.h"
@@ -82,6 +83,7 @@ void OnUpdate(IVM* vm, StackID stackId)
   });
   SkyrimPlatform::GetSingleton()->StartWorker();
   g_nativeCallRequirements.gameThrQ->Update(Viet::Void());
+  ObjectReferenceApi::MaintainCharacterControllerCollisionProfiles();
   g_nativeCallRequirements.stackId = std::numeric_limits<StackID>::max();
   g_nativeCallRequirements.vm = nullptr;
 }

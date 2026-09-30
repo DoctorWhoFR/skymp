@@ -321,6 +321,7 @@ private:
 
   void ClearState()
   {
+    ObjectReferenceApi::RequestMountStateReset();
     ConsoleApi::Clear();
     EventsApi::Clear();
     taskQueue.Clear();

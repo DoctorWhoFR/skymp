@@ -1,4 +1,5 @@
 #pragma once
+#include "ObjectReferenceApi.h"
 #include "PapyrusTESModPlatform.h"
 #include "SkyrimPlatform.h"
 #include "ThreadPoolWrapper.h"
@@ -29,6 +30,7 @@ private:
       SkyrimPlatform::GetSingleton()->JsTick(env, false);
     });
     TESModPlatform::Update();
+    ObjectReferenceApi::MaintainCharacterControllerCollisionProfiles();
     TickHandler::GetSingleton()->Update();
   };
 

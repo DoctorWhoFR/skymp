@@ -1622,3 +1622,10 @@ export declare function getAnimationVariablesFromActor(actorFormId: number): Act
 export declare function applyAnimationVariablesToActor(actorFormId: number, animationVariables: ActorAnimationVariables): boolean;
 
 export declare function setCollision(refrFormId: number, collision: boolean): void;
+export declare function setCharacterControllerCollision(actorFormId: number, collision: boolean): void;
+export declare function setCharacterControllerCollisionProfile(actorFormId: number, profile: number, lease?: number): void;
+export declare function getCharacterControllerCollisionProfileState(actorFormId: number): number;
+export declare function setObjectReferenceTransform(refrFormId: number, positionX: number, positionY: number, positionZ: number, angleX: number, angleY: number, angleZ: number): void;
+export declare function setMountedPairKinematicTransform(horseFormId: number, riderFormId: number, lease: number, serial: number, positionX: number, positionY: number, positionZ: number, angleX: number, angleY: number, angleZ: number, riderSeatHeight: number): boolean;
+export declare function setMountedHorseKinematicTransform(horseFormId: number, riderFormId: number, lease: number, serial: number, positionX: number, positionY: number, positionZ: number, angleX: number, angleY: number, angleZ: number): boolean;
+export declare function releaseMountedPairKinematicTransform(horseFormId: number, riderFormId: number, lease: number): void;
