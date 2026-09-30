@@ -737,11 +737,22 @@ void MpObjectReference::UpdateHoster(uint32_t newHosterId)
   auto hostedMsg = CreatePropertyMessage_(this, "isHostedByOther", "true");
   auto notHostedMsg = CreatePropertyMessage_(this, "isHostedByOther", "false");
   for (auto listener : this->GetActorListeners()) {
-    if (newHosterId != 0 && newHosterId != listener->GetFormId()) {
-      listener->GetActorToSendTo().SendToUser(hostedMsg, true);
-    } else {
-      listener->GetActorToSendTo().SendToUser(notHostedMsg, true);
+    const bool hosted =
+      newHosterId != 0 && newHosterId != listener->GetFormId();
+    // ia-forge (30/09, horses): an offline listener (an NPC) has no game of
+    // its own; GetActorToSendTo would route its message to its hoster, who
+    // then got "true" for an actor they host themselves (the last message
+    // wins, order depends on the listener array). The hoster already gets
+    // their own message as a listener.
+    if (listener->GetUserId() == Networking::InvalidUserId) {
+      spdlog::info("UpdateHoster {:x} -> {:x}: skip offline listener {:x} "
+                   "(would send {} to its hoster)",
+                   GetFormId(), newHosterId, listener->GetFormId(), hosted);
+      continue;
     }
+    spdlog::info("UpdateHoster {:x} -> {:x}: send {} to {:x}", GetFormId(),
+                 newHosterId, hosted, listener->GetFormId());
+    listener->SendToUser(hosted ? hostedMsg : notHostedMsg, true);
   }
 }
 
