@@ -330,7 +330,9 @@ bool IsHealthDamage(uint32_t mgefId, WorldState* espmProvider)
     return false;
   }
   auto data = espm::GetData<espm::MGEF>(mgefId, espmProvider).data;
+  // Frost, fire and shock damage are Dual (health + stamina or magicka).
   bool valueMod = data.effectType == espm::MGEF::EffectType::ValueMod ||
+    data.effectType == espm::MGEF::EffectType::Dual ||
     data.effectType == espm::MGEF::EffectType::ValueAndParts ||
     data.effectType == espm::MGEF::EffectType::PeakValueMod;
   return valueMod && data.primaryAV == espm::ActorValue::Health &&
