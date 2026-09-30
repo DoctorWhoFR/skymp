@@ -1,4 +1,4 @@
-import { Actor, ActorBase, createText, destroyText, Form, FormType, Game, Keyword, NetImmerse, ObjectReference, once, printConsole, setTextPos, setTextSize, setTextString, storage, TESModPlatform, Utility, worldPointToScreenPoint } from "skyrimPlatform";
+import { Actor, ActorBase, createText, destroyText, Form, FormType, Game, Keyword, MagicEffect, NetImmerse, ObjectReference, once, printConsole, setTextPos, setTextSize, setTextString, storage, TESModPlatform, Utility, worldPointToScreenPoint } from "skyrimPlatform";
 import { setDefaultAnimsDisabled, applyAnimation } from "../sync/animation";
 import { Appearance, applyAppearance } from "../sync/appearance";
 import { isBadMenuShown, applyEquipment } from "../sync/equipment";
@@ -406,7 +406,7 @@ export class FormView {
     // PNJ « figés » vus par un joueur quand un autre les héberge (essai S1 à deux, 2026-09-25) : drapeau
     // isHostedByOther, hébergé par moi, mouvements reçus / appliqués, position voulue / réelle, combat.
     // ia-forge (2026-09-29) : acteurs seulement ; tous les objets visibles donnaient ~55 traces/s depuis le tri du monde.
-    if (gmDebugOn("pnj") && Date.now() - this.pnjTraceAt > 2000 && Actor.from(refr)) {
+    if (gmDebugOn("pnj") && Date.now() - this.pnjTraceAt > (Actor.from(refr)?.isInCombat() ? 500 : 2000) && Actor.from(refr)) {
       this.pnjTraceAt = Date.now();
       try {
         const a = Actor.from(refr);
@@ -425,6 +425,10 @@ export class FormView {
           ecart: want ? Math.round(ObjectReferenceEx.getDistance(p, want)) : -1,
           combat: a ? a.isInCombat() : null,
           mort: a ? a.isDead() : null,
+          // ia-forge (30/09) : effets secondaires des enchantements (docs/91, lot 4) : le givre ralentit-il ?
+          vitesse: a ? Math.round(a.getActorValue("SpeedMult")) : null,
+          vigueur: a ? Math.round(a.getActorValue("Stamina")) : null,
+          givre: a ? a.hasMagicEffect(MagicEffect.from(Game.getFormEx(0xb72a0))) : null,
         });
       } catch (e) {
         gmTrace("erreur", `trace pnj : ${e}`);
