@@ -12,7 +12,8 @@ import { SpApiInteractor } from "../services/spApiInteractor";
 
 const sqr = (x: number) => x * x;
 
-export const applyMovement = (refr: ObjectReference, m: Movement, isMyClone?: boolean): void => {
+// ia-forge (mounts): a remote rider held by its horse is not moved here (sync/mountedRider.ts).
+export const applyMovement = (refr: ObjectReference, m: Movement, isMyClone?: boolean, mounted?: boolean): void => {
   if (teleportIfNeed(refr, m)) {
     return;
   }
@@ -26,7 +27,7 @@ export const applyMovement = (refr: ObjectReference, m: Movement, isMyClone?: bo
     SpApiInteractor.getControllerInstance().emitter.emit("newLocalLagValueCalculated", { lagUnitsNoZ });
   }
 
-  translateTo(refr, m);
+  if (!mounted) translateTo(refr, m);
 
   const ac = Actor.from(refr);
   if (!ac) {
@@ -57,7 +58,7 @@ export const applyMovement = (refr: ObjectReference, m: Movement, isMyClone?: bo
   // ac.stopCombat();
   ac.blockActivation(true);
 
-  keepOffsetFromActor(ac, m);
+  if (!mounted) keepOffsetFromActor(ac, m);
 
   applySprinting(ac, m.runMode === "Sprinting");
   applyBlocking(ac, m);

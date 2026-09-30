@@ -5,6 +5,7 @@ import { isBadMenuShown, applyEquipment } from "../sync/equipment";
 import { RespawnNeededError } from "../lib/errors";
 import { FormModel } from "./model";
 import { applyMovement } from "../sync/movementApply";
+import { applyMountedRider } from "../sync/mountedRider";
 import { SpawnProcess } from "./spawnProcess";
 import { ObjectReferenceEx } from "../extensions/objectReferenceEx";
 import { PlayerCharacterDataHolder } from "./playerCharacterDataHolder";
@@ -437,6 +438,8 @@ export class FormView {
 
     if (model.movement) {
       let ac = Actor.from(refr);
+      // ia-forge (mounts): every frame, not only when a movement arrives (the kinematic pair follows the horse).
+      const mounted = !!ac && !!model.isHostedByOther && applyMountedRider(ac, this.remoteRefrId);
       if (
         this.movState.lastApply &&
         Date.now() - this.movState.lastApply > 1500
@@ -471,7 +474,7 @@ export class FormView {
             model.movement.isDead = true;
           }
           try {
-            applyMovement(refr, model.movement, !!model.isMyClone);
+            applyMovement(refr, model.movement, !!model.isMyClone, mounted);
           } catch (e) {
             if (e instanceof RespawnNeededError) {
               this.lastWorldOrCell = model.movement.worldOrCell;

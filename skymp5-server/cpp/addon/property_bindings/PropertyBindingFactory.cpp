@@ -7,6 +7,7 @@
 #include "ConsoleCommandsAllowedBinding.h"
 #include "CustomPropertyBinding.h"
 #include "EquipmentBinding.h"
+#include "HosterBinding.h"
 #include "IdxBinding.h"
 #include "InventoryBinding.h"
 #include "IsDeadBinding.h"
@@ -57,6 +58,7 @@ PropertyBindingFactory::CreateStandardPropertyBindings()
   result["templateChain"] = std::make_shared<TemplateChainBinding>();
   result["lastAnimEvent"] = std::make_shared<LastAnimEventBinding>();
   result["respawnPercentages"] = std::make_shared<RespawnPercentagesBinding>();
+  result["hoster"] = std::make_shared<HosterBinding>();
   return result;
 }
 

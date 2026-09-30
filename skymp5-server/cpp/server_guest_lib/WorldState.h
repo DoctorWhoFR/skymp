@@ -239,6 +239,9 @@ public:
   std::shared_ptr<spdlog::logger> logger;
   std::vector<std::shared_ptr<PartOneListener>> listeners;
   std::unordered_map<uint32_t, uint32_t> hosters;
+  // ia-forge (mounts): refr -> the actor that must host it (its rider). Host
+  // attempts by anyone else are refused; see HosterBinding.
+  std::unordered_map<uint32_t, uint32_t> forcedHosters;
   std::unordered_map<uint32_t, std::map<uint32_t, float>>
     activationChildsByActivationParent;
   std::vector<std::optional<std::chrono::system_clock::time_point>>

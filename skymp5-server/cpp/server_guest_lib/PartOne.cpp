@@ -455,6 +455,12 @@ void PartOne::HandlePacket(void* partOneInstance, Networking::UserId userId,
           // TODO: apply dependency inversion here: connection handling code
           // should not depend on animation system
           this_->animationSystem.ClearInfo(actor);
+
+          // ia-forge (mounts): a rider who leaves no longer holds their horse.
+          auto& forced = this_->worldState.forcedHosters;
+          for (auto it = forced.begin(); it != forced.end();) {
+            it = it->second == actor->GetFormId() ? forced.erase(it) : std::next(it);
+          }
         }
         this_->serverState.Disconnect(userId);
         this_->serverState.disconnectingUserId = Networking::InvalidUserId;

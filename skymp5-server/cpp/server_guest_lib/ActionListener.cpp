@@ -717,6 +717,14 @@ void ActionListener::OnHostAttempt(const RawMessageData& rawMsgData,
     return;
   }
 
+  // ia-forge (mounts): a ridden horse stays with its rider, whatever the 2 s
+  // rule below says.
+  if (auto it = partOne.worldState.forcedHosters.find(remoteId);
+      it != partOne.worldState.forcedHosters.end() &&
+      it->second != me->GetFormId()) {
+    return;
+  }
+
   auto& hoster = partOne.worldState.hosters[remoteId];
   const uint32_t prevHoster = hoster;
 
