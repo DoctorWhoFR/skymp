@@ -915,9 +915,15 @@ void TESModPlatform::AddItemEx(
               break;
             }
             // BSSimpleList's const iterators do not compile: move the stack to
-            // the front, then pop it.
+            // the front, then pop it. pop_front leaves the last item in place
+            // (empty() tests it), so the last one is cleared by hand.
             std::swap(*it, *lists.begin());
-            lists.pop_front();
+            auto second = lists.begin();
+            ++second;
+            if (second == lists.end())
+              *lists.begin() = nullptr;
+            else
+              lists.pop_front();
             entry->countDelta -= n;
             left -= n;
             again = true;
