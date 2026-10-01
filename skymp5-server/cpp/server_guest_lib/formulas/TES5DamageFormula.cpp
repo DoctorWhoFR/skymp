@@ -343,11 +343,10 @@ int CopyScore(const Inventory::Entry& inv, const Inventory::Entry& worn)
   } else if (invName.empty()) {
     score += 2;
   }
-  if (inv.poisonId && inv.poisonId == worn.poisonId) {
+  // The worn copy's poison as the game reports it, none included: a plain
+  // sword in hand is not the poisoned one.
+  if (inv.poisonId.value_or(0) == worn.poisonId.value_or(0)) {
     score += 2;
-  }
-  if (inv.poisonId && inv.poisonCount.value_or(1) > 0) {
-    score += 1;
   }
   return score;
 }
@@ -494,16 +493,11 @@ void ConsumeOnHit(MpActor& aggressor, uint32_t baseId, bool blocked)
         e.chargePercent.value_or(0) -
           IaForgeArmamentSettings::Get().enchantChargePerHit);
     }
-    // The poison is state, not identity: gone at its last dose, the copy
-    // stays the same one everywhere.
-    if (e.poisonId) {
-      uint32_t left = e.poisonCount.value_or(1);
-      if (left <= 1) {
-        e.poisonId.reset();
-        e.poisonCount.reset();
-      } else {
-        e.poisonCount = left - 1;
-      }
+    // The spent poison stays on the copy at 0 doses (no more damage): the
+    // game still reports it in hand, and taking it off would make another
+    // copy with that poison the best fit, which would then lose its doses.
+    if (e.poisonId && e.poisonCount.value_or(1) > 0) {
+      e.poisonCount = e.poisonCount.value_or(1) - 1;
     }
     aggressor.SetInventoryQuiet(inv);
     return;

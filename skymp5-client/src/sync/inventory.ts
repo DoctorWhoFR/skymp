@@ -216,7 +216,10 @@ const extractExtraData = (
 const squash = (inv: Inventory): Inventory => {
   const res = new Array<Entry>();
   inv.entries.forEach((e) => {
-    const same = res.find((x) => e.baseId === x.baseId && extrasEqual(x, e));
+    // A poison is state, not identity, but the game's poisoned and plain copies stay two lines: what each one holds.
+    const same = res.find(
+      (x) => e.baseId === x.baseId && extrasEqual(x, e) && (x.poisonId || 0) === (e.poisonId || 0)
+    );
     if (same) {
       same.count += e.count;
     } else {
@@ -331,6 +334,9 @@ export const getInventory = (refr: ObjectReference): Inventory => {
   const base = getBaseContainerAsInventory(refr);
   const res = squash(sumInventories(base, getExtraContainerChangesAsInventory(refr)));
   const negative = res.entries.filter((e) => e.count < 0);
+  // ia-forge: one cannot hold -1 sword. The engine's countDelta can lag behind a stack it holds (seen at login); the
+  // stacks are what the game shows, and a negative count makes the server reject the whole equipment message.
+  const holds = { entries: res.entries.filter((e) => e.count > 0) };
   if (negative.length && refr.getFormID() === 0x14 && gmDebugOn("inventory")) {
     const ids = new Set(negative.map((e) => e.baseId));
     const raw = (getExtraContainerChanges(0x14) || [])
@@ -350,7 +356,7 @@ export const getInventory = (refr: ObjectReference): Inventory => {
       raw,
     });
   }
-  return res;
+  return holds;
 };
 
 const basesReset = (): Set<number> => {
@@ -389,6 +395,41 @@ const traceGameCopies = (refr: ObjectReference, diff: Entry[]): void => {
   gmTrace("inventory", "re-apply", { want, game });
 };
 
+// ia-forge (docs/91): what to add (+) and remove (-) so that the game holds the server's copies. Copies are matched
+// unit by unit, first those with the same poison, then those of the same identity whatever their poison (state the
+// game cannot change in place): no swap for a spent dose, no -1/+1 loop between two copies the server keeps apart,
+// and what is added keeps its own extras (a plain sword is never added with another copy's poison).
+export const getCopyDiff = (
+  server: Inventory,
+  game: Inventory,
+  ignoreWorn: boolean
+): Inventory => {
+  const s: Entry[] = JSON.parse(JSON.stringify(server.entries));
+  const g: Entry[] = JSON.parse(JSON.stringify(game.entries));
+  const pair = (samePoison: boolean) => {
+    for (const a of s) {
+      for (const b of g) {
+        if (a.count <= 0) break;
+        if (b.count <= 0 || a.baseId !== b.baseId || !extrasEqual(a, b, ignoreWorn)) continue;
+        if (samePoison && (a.poisonId || 0) !== (b.poisonId || 0)) continue;
+        // Another poison is tolerated only in hand, where a swap would unequip; elsewhere the game copy is replaced.
+        if (!samePoison && !b.worn && !b.wornLeft) continue;
+        const n = Math.min(a.count, b.count);
+        a.count -= n;
+        b.count -= n;
+      }
+    }
+  };
+  pair(true);
+  pair(false);
+  return {
+    entries: [
+      ...s.filter((e) => e.count > 0),
+      ...g.filter((e) => e.count > 0).map((e) => ({ ...e, count: -e.count })),
+    ],
+  };
+};
+
 export const applyInventory = (
   refr: ObjectReference,
   newInventory: Inventory,
@@ -396,9 +437,7 @@ export const applyInventory = (
   ignoreWorn = false
 ): boolean => {
   resetBase(refr);
-  // ia-forge: the server keeps copies that differ only by state (doses, charge) apart; one per identity here, or the
-  // diff took one -1 and the other +1 forever.
-  const diff = getDiff(squash(newInventory), getInventory(refr), ignoreWorn).entries;
+  const diff = getCopyDiff(newInventory, getInventory(refr), ignoreWorn).entries;
   if (diff.length && refr.getFormID() === 0x14 && gmDebugOn("inventory")) traceGameCopies(refr, diff);
 
   let res = true;
