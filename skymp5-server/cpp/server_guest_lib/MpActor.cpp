@@ -1681,6 +1681,18 @@ void MpActor::DropItem(const uint32_t baseId, const Inventory::Entry& entry)
 
   placedObject->SetCount(count);
 
+  // ia-forge: PlaceAtMe puts the item on the actor's origin, at its feet and
+  // half in the ground (docs/97): in front of them and a little above, it
+  // falls where it can be seen and picked up.
+  {
+    const float yaw = GetAngle().z * 3.14159265f / 180.f;
+    NiPoint3 at = GetPos();
+    at.x += std::sin(yaw) * 60.f;
+    at.y += std::cos(yaw) * 60.f;
+    at.z += 40.f;
+    placedObject->SetPos(at);
+  }
+
   Inventory::ExtraData groundExtra = entry;
   groundExtra.worn_.reset();
   groundExtra.wornLeft.reset();

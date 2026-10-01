@@ -152,6 +152,9 @@ const extrasEqual = (a: Entry, b: Entry, ignoreWorn = false) => {
   );
 };
 
+/** Same copy, worn or not (docs/97): the copy the server wants worn may be in the game but not on yet. */
+export const sameCopyAnyWorn = (a: Entry, b: Entry): boolean => a.baseId === b.baseId && extrasEqual(a, b, true);
+
 export const hasExtras = (e: Entry): boolean => {
   return !extrasEqual(e, { baseId: 0, count: 0 }) || !!e.poisonId;
 };

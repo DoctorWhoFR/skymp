@@ -388,6 +388,10 @@ const Inventory::Entry* FindWieldedCopy(const MpActor& actor, uint32_t baseId)
       int bestScore = -1;
       for (auto& e : inv) {
         int score = e.count > 0 ? CopyScore(e, worn) : -1;
+        // The copy the server itself put in that hand (docs/97) comes first.
+        if (score >= 0 && e.GetWorn() == hand) {
+          score += 8;
+        }
         if (score > bestScore) {
           best = &e;
           bestScore = score;

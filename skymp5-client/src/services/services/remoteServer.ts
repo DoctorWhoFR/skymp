@@ -22,7 +22,7 @@ import { IdManager } from '../../lib/idManager';
 import { nameof } from '../../lib/nameof';
 import { setActorValuePercentage } from '../../sync/actorvalues';
 import { applyAppearanceToPlayer } from '../../sync/appearance';
-import { applyEquipment, isBadMenuShown } from '../../sync/equipment';
+import { applyEquipment, applyWornOnly, isBadMenuShown } from '../../sync/equipment';
 import { Inventory, applyInventory } from '../../sync/inventory';
 import { Movement } from '../../sync/movement';
 import { learnSpells, removeAllSpells } from '../../sync/spell';
@@ -87,7 +87,7 @@ on('update', () => {
     pcInvLastApply = Date.now();
     const pcInv = getPcInventory();
     if (pcInv) {
-      applyInventory(Game.getPlayer()!, pcInv, false, true);
+      applyWornOnly(Game.getPlayer()!, pcInv);
     }
   }
 });
@@ -529,9 +529,8 @@ export class RemoteServer extends ClientListener {
               }
             }
           })();
-          // Unfortunatelly it requires two calls to work
+          // ia-forge (docs/97): one pass; the worn items come from the server's inventory (applyWornOnly).
           Utility.wait(1).then(applyPcInv);
-          Utility.wait(1.3).then(applyPcInv);
           // Note: appearance part was copy-pasted
           if (msg.appearance) {
             applyAppearanceToPlayer(msg.appearance);
