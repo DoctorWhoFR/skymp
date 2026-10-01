@@ -1,4 +1,4 @@
-import { Actor, Game, storage } from "skyrimPlatform";
+import { Actor, Game, storage, TESModPlatform } from "skyrimPlatform";
 import * as skyrimPlatform from "skyrimPlatform";
 import { remoteIdToLocalId } from "../view/worldViewMisc";
 import { gmDebugOn, gmTrace } from "../debugTrace";
@@ -13,7 +13,7 @@ import { gmDebugOn, gmTrace } from "../debugTrace";
 const PROFILE_NONE = 0;
 const PROFILE_MOUNTED_HORSE = 1;
 const PROFILE_REMOTE_PROXY = 2;
-const ACTIVATE_RETRY_MS = 2000;
+const ACTIVATE_RETRY_MS = 800;
 
 interface RiderState {
   horse: number;
@@ -25,6 +25,65 @@ interface RiderState {
 }
 
 const riders = new Map<number, RiderState>();
+
+// ia-forge (BUG-048, 1er/10): the walking intent given to the seated rider did not move the horse's legs. The
+// horse's animation graph is driven directly, every frame, from the gait its rider sends (as Skyrim Together syncs
+// Speed / HorseSpeedSampled / IsSprinting / iSyncSprintState of HorseRootBehavior).
+interface HorseGait {
+  speed: number;
+  sprint: boolean;
+  moving: boolean;
+  at: number;
+}
+const horseGaits = new Map<number, HorseGait>();
+let gaitTraceAt = 0;
+
+/** From applyMovement: the gait received for a remote horse that a remote rider drives in our game. */
+export const setRiddenHorseGait = (horseLocal: number, speed: number, runMode: string): void => {
+  horseGaits.set(horseLocal, { speed, sprint: runMode === "Sprinting", moving: runMode !== "Standing", at: Date.now() });
+};
+
+const driveHorseGraph = (horse: Actor, now: number): void => {
+  const g = horseGaits.get(horse.getFormID());
+  if (!g) return;
+  // No movement for a while: the rider stopped sending (or left); stand still.
+  const speed = now - g.at > 1500 ? 0 : g.speed;
+  const moving = now - g.at > 1500 ? false : g.moving;
+  const sprint = moving && g.sprint;
+  horse.setAnimationVariableFloat("Speed", speed);
+  horse.setAnimationVariableFloat("HorseSpeedSampled", speed);
+  horse.setAnimationVariableFloat("Direction", 0);
+  horse.setAnimationVariableFloat("TurnDelta", 0);
+  horse.setAnimationVariableBool("isMoving", moving);
+  horse.setAnimationVariableBool("IsSprinting", sprint);
+  horse.setAnimationVariableInt("iSyncSprintState", sprint ? 1 : 0);
+  // The graph's own state ids (constants of HorseRootBehavior), not guessed numbers.
+  const stateDefault = horse.getAnimationVariableInt("iState_HorseDefault");
+  const stateSprint = horse.getAnimationVariableInt("iState_HorseSprint");
+  const engineState = horse.getAnimationVariableInt("iState");
+  horse.setAnimationVariableInt("iState", sprint ? stateSprint : stateDefault);
+  horse.setAnimationVariableInt("iSyncIdleLocomotion", moving ? 1 : 0);
+  const style = animStyle();
+  horse.setAnimationVariableInt("iSyncForwardState", style === 1 || style === 4 ? (moving ? 1 : 0) : 0);
+  if (gmDebugOn("mount") && now - gaitTraceAt > 1000) {
+    gaitTraceAt = now;
+    gmTrace("mount", "ridden horse graph", {
+      style,
+      horse: horse.getFormID().toString(16),
+      speed,
+      sprint,
+      moving,
+      readBack: Math.round(horse.getAnimationVariableFloat("Speed")),
+      sampled: Math.round(horse.getAnimationVariableFloat("HorseSpeedSampled")),
+      stateDefault,
+      stateSprint,
+      engineState,
+      idleLoco: horse.getAnimationVariableInt("iSyncIdleLocomotion"),
+      forward: horse.getAnimationVariableInt("iSyncForwardState"),
+      sprintState: horse.getAnimationVariableInt("iSyncSprintState"),
+    });
+  }
+};
 let lease = (Date.now() & 0x7fffffff) >>> 0 || 1;
 let cachedRev = -1;
 const horseByRider = new Map<number, number>();
@@ -57,6 +116,17 @@ export const horseOfRider = (riderRemoteId: number | undefined): number => {
 const method = (): number => {
   const m = readStorage("gmMountMethod");
   return m === 3 ? 3 : 1;
+};
+
+/**
+ * How the observer animates a remote ridden horse (staff command /mountmethod n seat anim, live, no relaunch):
+ * 1 = rider keeps a walking intent + iSyncForwardState follows (local-43); 2 = neither (local-44);
+ * 3 = walking intent, forward 0; 4 = no walking intent, forward follows.
+ */
+export const animStyle = (): number => {
+  const a = readStorage("gmMountAnim");
+  // Default 2 = local-44: the version Max saw as "tout est parfait" (1er/10, 02:19 UTC).
+  return typeof a === "number" && a >= 1 && a <= 4 ? a : 2;
 };
 
 const spFn = (name: string): ((...args: number[]) => unknown) | undefined => {
@@ -109,8 +179,21 @@ export const applyMountedRider = (rider: Actor, riderRemoteId: number | undefine
       s.triedAt = now;
       rider.setDontMove(false);
       rider.clearKeepOffsetFromActor();
+      // BUG-048 N2 (1er/10): activated from afar, the clone's AI walked to the horse and never caught a horse that
+      // had left (0.5 s to 21 s in the saddle, sometimes never). It is put on the horse first.
+      let placed = false;
+      try {
+        TESModPlatform.moveRefrToPosition(
+          rider, horse.getParentCell(), horse.getWorldSpace(),
+          horse.getPositionX(), horse.getPositionY(), horse.getPositionZ(),
+          0, 0, horse.getAngleZ(),
+        );
+        placed = true;
+      } catch (e) {
+        gmTrace("mount", `remote rider place failed: ${e}`);
+      }
       horse.activate(rider, true);
-      gmTrace("mount", "remote rider activate", { rider: riderLocal.toString(16) });
+      gmTrace("mount", "remote rider activate", { rider: riderLocal.toString(16), placed });
     }
   } else {
     const seat = readStorage("gmMountSeat");
@@ -122,6 +205,8 @@ export const applyMountedRider = (rider: Actor, riderRemoteId: number | undefine
       typeof seat === "number" ? seat : 90,
     );
   }
+
+  if (s.method === 1 && rider.isOnMount()) driveHorseGraph(horse, now);
 
   if (gmDebugOn("mount") && now - s.traceAt > 500) {
     s.traceAt = now;
@@ -156,6 +241,7 @@ export const riderOnHorse = (horseLocal: number): Actor | null => {
 
 const release = (rider: Actor, s: RiderState) => {
   riders.delete(rider.getFormID());
+  horseGaits.delete(s.horse);
   if (s.method === 1) {
     if (rider.isOnMount()) rider.dismount();
   } else {

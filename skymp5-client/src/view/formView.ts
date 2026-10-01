@@ -14,6 +14,8 @@ import { lastTryHost, tryHost } from "./hostAttempts";
 import { ModelApplyUtils } from "./modelApplyUtils";
 import { localIdToRemoteId } from "./worldViewMisc";
 import { gmDebugOn, gmTrace } from "../debugTrace";
+import { recordAction } from "../sync/rideWatch";
+import { queueNiNodeUpdateSafe } from "../sync/niNodeSafe";
 import { SpApiInteractor } from "../services/spApiInteractor";
 import { WorldCleanerService } from "../services/services/worldCleanerService";
 import { GamemodeUpdateService } from "../services/services/gamemodeUpdateService";
@@ -322,6 +324,7 @@ export class FormView {
       if (refrId >= 0xff000000) {
         const refr = ObjectReference.from(Game.getFormEx(refrId));
         if (refr) {
+          recordAction("delete", refr);
           refr.delete();
         }
         SpApiInteractor.getControllerInstance().lookupListener(WorldCleanerService).modWcProtection(refrId, -1);
@@ -558,8 +561,18 @@ export class FormView {
         if (isOnScreen != this.isOnScreen) {
           this.isOnScreen = isOnScreen;
           if (isOnScreen) {
-            actor.queueNiNodeUpdate();
-            (Game.getPlayer() as Actor).queueNiNodeUpdate();
+            // ia-forge (BUG-048): never on a mounted actor (sync/niNodeSafe.ts). Proven on 1er/10 at 02:00:24
+            // UTC: this very call on the mounted player, the moment another player's head came on screen.
+            const player = Game.getPlayer() as Actor;
+            recordAction("niNodeUpdate", refr, { player: true, onMount: player.isOnMount() });
+            gmTrace("mount", "queueNiNodeUpdate (remote actor on screen, then player)", {
+              refr: refr.getFormID().toString(16),
+              srv: (this.remoteRefrId ?? 0).toString(16),
+              onMount: player.isOnMount(),
+              z: Math.round(player.getPositionZ()),
+            });
+            queueNiNodeUpdateSafe(actor, "on screen");
+            queueNiNodeUpdateSafe(player, "on screen");
           }
         }
       }

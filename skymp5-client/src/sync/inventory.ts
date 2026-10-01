@@ -23,6 +23,7 @@ import {
   Form,
 } from "skyrimPlatform";
 import { gmDebugOn, gmTrace } from "../debugTrace";
+import { queueNiNodeUpdateSafe } from "./niNodeSafe";
 
 export interface Extra {
   health?: number;
@@ -506,7 +507,7 @@ export const applyInventory = (
     if (queueNiNodeUpdateNeeded) {
       const ac = Actor.from(refr);
       if (ac) {
-        ac.queueNiNodeUpdate();
+        queueNiNodeUpdateSafe(ac, "worn");
       }
     }
   });

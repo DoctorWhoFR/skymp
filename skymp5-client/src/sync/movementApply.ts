@@ -9,8 +9,9 @@ import { RespawnNeededError } from "../lib/errors";
 import { Movement, RunMode, AnimationVariables, Transform, NiPoint3 } from "./movement";
 import { ObjectReferenceEx } from "../extensions/objectReferenceEx";
 import { SpApiInteractor } from "../services/spApiInteractor";
-import { riderOnHorse } from "./mountedRider";
+import { animStyle, riderOnHorse, setRiddenHorseGait } from "./mountedRider";
 import { gmDebugOn, gmTrace } from "../debugTrace";
+import { recordAction } from "./rideWatch";
 
 const sqr = (x: number) => x * x;
 let lastDriverTrace = 0;
@@ -65,7 +66,11 @@ export const applyMovement = (refr: ObjectReference, m: Movement, isMyClone?: bo
   // walking intent goes to the rider, who drives it.
   const driver = mounted ? null : riderOnHorse(ac.getFormID());
   if (driver) {
-    keepOffsetFromActor(driver, m);
+    // The horse's graph is driven from the received gait (mountedRider.ts); the seated rider keeps its walking
+    // intent too (local-44 removed it and the remote horse stopped animating; local-43 validated by Max, 1er/10).
+    setRiddenHorseGait(ac.getFormID(), m.speed || 0, m.runMode);
+    const style = animStyle();
+    if (style === 1 || style === 3) keepOffsetFromActor(driver, m);
     if (gmDebugOn("mount") && Date.now() - lastDriverTrace > 1000) {
       lastDriverTrace = Date.now();
       gmTrace("mount", "horse driven by its rider", {
@@ -86,6 +91,7 @@ export const applyMovement = (refr: ObjectReference, m: Movement, isMyClone?: bo
 };
 
 const keepOffsetFromActor = (ac: Actor, m: Movement) => {
+  recordAction("keepOffset", ac, { run: m.runMode });
   let offsetAngle = m.rot[2] - ac.getAngleZ();
   if (Math.abs(offsetAngle) < 5) {
     offsetAngle = 0;
@@ -208,6 +214,7 @@ const translateTo = (refr: ObjectReference, m: Movement) => {
     }
 
     if (!actor || !actor.isDead()) {
+      recordAction("translateTo", refr, { to: [Math.round(gTempTargetPos[0]), Math.round(gTempTargetPos[1]), Math.round(gTempTargetPos[2])], speed: Math.round(speed), run: m.runMode });
       refr.translateTo(
         gTempTargetPos[0],
         gTempTargetPos[1],

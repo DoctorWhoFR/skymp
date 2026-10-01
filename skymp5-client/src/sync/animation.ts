@@ -14,6 +14,7 @@ import {
 import { Movement } from "./movement";
 import { applyWeapDrawn } from "./movementApply";
 import { gmDebugOn, gmTrace } from "../debugTrace";
+import { recordAction } from "./rideWatch";
 
 export enum AnimationEventName {
   Ragdoll = "Ragdoll",
@@ -203,6 +204,7 @@ export const applyAnimation = (
     }
   }
 
+  recordAction("anim", refr, { ev: anim.animEventName });
   Debug.sendAnimationEvent(refr, anim.animEventName);
 
   if (anim.animEventName === "GetUpBegin") {
