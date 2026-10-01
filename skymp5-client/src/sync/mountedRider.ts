@@ -140,6 +140,20 @@ export const applyMountedRider = (rider: Actor, riderRemoteId: number | undefine
   return true;
 };
 
+/**
+ * The remote rider sitting on this horse in our game, if any (real saddle). A ridden horse no longer listens to its
+ * own AI: the walking intent that animates its legs must be given to its rider, as Skyrim's riding NPCs do.
+ */
+export const riderOnHorse = (horseLocal: number): Actor | null => {
+  let found: Actor | null = null;
+  riders.forEach((s, riderLocal) => {
+    if (found || s.horse !== horseLocal || s.method !== 1) return;
+    const rider = Actor.from(Game.getFormEx(riderLocal));
+    if (rider && rider.isOnMount()) found = rider;
+  });
+  return found;
+};
+
 const release = (rider: Actor, s: RiderState) => {
   riders.delete(rider.getFormID());
   if (s.method === 1) {

@@ -9,8 +9,11 @@ import { RespawnNeededError } from "../lib/errors";
 import { Movement, RunMode, AnimationVariables, Transform, NiPoint3 } from "./movement";
 import { ObjectReferenceEx } from "../extensions/objectReferenceEx";
 import { SpApiInteractor } from "../services/spApiInteractor";
+import { riderOnHorse } from "./mountedRider";
+import { gmDebugOn, gmTrace } from "../debugTrace";
 
 const sqr = (x: number) => x * x;
+let lastDriverTrace = 0;
 
 // ia-forge (mounts): a remote rider held by its horse is not moved here (sync/mountedRider.ts).
 export const applyMovement = (refr: ObjectReference, m: Movement, isMyClone?: boolean, mounted?: boolean): void => {
@@ -58,7 +61,20 @@ export const applyMovement = (refr: ObjectReference, m: Movement, isMyClone?: bo
   // ac.stopCombat();
   ac.blockActivation(true);
 
-  if (!mounted) keepOffsetFromActor(ac, m);
+  // ia-forge (mounts, 1er/10): a horse ridden by a remote rider in our game slid without moving its legs: its
+  // walking intent goes to the rider, who drives it.
+  const driver = mounted ? null : riderOnHorse(ac.getFormID());
+  if (driver) {
+    keepOffsetFromActor(driver, m);
+    if (gmDebugOn("mount") && Date.now() - lastDriverTrace > 1000) {
+      lastDriverTrace = Date.now();
+      gmTrace("mount", "horse driven by its rider", {
+        horse: ac.getFormID().toString(16),
+        rider: driver.getFormID().toString(16),
+        runMode: m.runMode,
+      });
+    }
+  } else if (!mounted) keepOffsetFromActor(ac, m);
 
   applySprinting(ac, m.runMode === "Sprinting");
   applyBlocking(ac, m);

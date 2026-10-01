@@ -1,3 +1,4 @@
+import { gmDebugOn, gmTrace } from "../debugTrace";
 import { FormModel } from '../view/model';
 import { ObjectReference, Actor, TESModPlatform } from "skyrimPlatform";
 import { NiPoint3, Movement, RunMode } from "./movement";
@@ -31,12 +32,34 @@ class PlayerCharacterSpeedCalculator {
   private static lastPcWorldOrCell = 0;
 }
 
+// ia-forge (mounts, 1er/10): Skyrim leaves SpeedSampled at 0 on a horse ridden by the player, so the horse we host
+// was sent as "Standing" while galloping and slid without moving its legs in every other game. Its gait comes from
+// how far it really went since the last send.
+let lastGaitTrace = 0;
+const riddenLast = new Map<number, { x: number; y: number; at: number }>();
+const riddenGait = (refr: ObjectReference, pos: NiPoint3): { runMode: RunMode; speed: number } => {
+  const id = refr.getFormID();
+  const now = Date.now();
+  const prev = riddenLast.get(id);
+  riddenLast.set(id, { x: pos[0], y: pos[1], at: now });
+  if (!prev || now - prev.at <= 0 || now - prev.at > 2000) return { runMode: "Standing", speed: 0 };
+  const speed = Math.sqrt((pos[0] - prev.x) ** 2 + (pos[1] - prev.y) ** 2) / ((now - prev.at) / 1000);
+  const runMode: RunMode = speed < 40 ? "Standing" : speed < 250 ? "Walking" : speed < 650 ? "Running" : "Sprinting";
+  if (gmDebugOn("mount") && now - lastGaitTrace > 1000) {
+    lastGaitTrace = now;
+    gmTrace("mount", "ridden horse gait", { horse: id.toString(16), runMode, speed: Math.round(speed) });
+  }
+  return { runMode, speed };
+};
+
 export const getMovement = (refr: ObjectReference, form?: FormModel): Movement => {
   const ac = Actor.from(refr);
+  const ridden = !!ac && refr.getFormID() !== 0x14 && ac.isBeingRidden();
+  const gait = ridden ? riddenGait(refr, ObjectReferenceEx.getPos(refr)) : null;
 
   // It is running for ObjectReferences because Standing
   // Doesn't lead to translateTo call
-  const runMode = ac ? getRunMode(ac) : "Running";
+  const runMode = gait ? gait.runMode : ac ? getRunMode(ac) : "Running";
 
   let healthPercentage = ac && ac.getActorValuePercentage("health");
   if (ac && ac.isDead()) {
@@ -58,7 +81,9 @@ export const getMovement = (refr: ObjectReference, form?: FormModel): Movement =
   const pos = ObjectReferenceEx.getPos(refr);
 
   let speed;
-  if (refr.getFormID() !== 0x14) {
+  if (gait) {
+    speed = gait.speed;
+  } else if (refr.getFormID() !== 0x14) {
     speed = refr.getAnimationVariableFloat("SpeedSampled");
   } else {
     // Real players often run into the wall.
@@ -80,7 +105,8 @@ export const getMovement = (refr: ObjectReference, form?: FormModel): Movement =
     pos,
     rot: [refr.getAngleX(), refr.getAngleY(), refr.getAngleZ()],
     runMode: runMode,
-    direction: runMode !== "Standing"
+    // A ridden horse goes where it faces.
+    direction: runMode !== "Standing" && !gait
       ? 360 * refr.getAnimationVariableFloat("Direction")
       : 0,
     isInJumpState: !!(ac && ac.getAnimationVariableBool("bInJumpState")),
