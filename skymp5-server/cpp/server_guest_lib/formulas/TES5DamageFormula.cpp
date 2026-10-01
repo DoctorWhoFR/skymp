@@ -5,6 +5,8 @@
 #include "SpellCastData.h"
 #include "WorldState.h"
 #include "libespm/espm.h"
+#include <algorithm>
+#include <cctype>
 
 namespace internal {
 
@@ -313,14 +315,41 @@ namespace IaForgeArmament {
 namespace {
 constexpr uint32_t kBodySlot = 1u << 2; // biped slot 32
 
-// Same copy, whatever the client did with charge, doses or worn flags since.
-bool SameCopy(const Inventory::Entry& a, const Inventory::Entry& b)
+// One rule for "the same copy" (docs/91): base, tempering, enchantment and
+// soul. Charge, poison and its doses are the copy's state, worn is where it
+// is. The name only ranks candidates: the game names every copy with extra
+// data after its base, and drops a custom name when it splits a stack.
+std::string Lower(std::string s)
 {
-  return a.baseId == b.baseId &&
-    TemperTenths(a) == TemperTenths(b) &&
-    a.enchantmentId.value_or(0) == b.enchantmentId.value_or(0) &&
-    a.name.value_or("") == b.name.value_or("") &&
-    a.poisonId.value_or(0) == b.poisonId.value_or(0);
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  return s;
+}
+
+// -1 if `inv` cannot be the copy the game reports as `worn`, else how well
+// it fits.
+int CopyScore(const Inventory::Entry& inv, const Inventory::Entry& worn)
+{
+  if (inv.baseId != worn.baseId || TemperTenths(inv) != TemperTenths(worn) ||
+      inv.enchantmentId.value_or(0) != worn.enchantmentId.value_or(0) ||
+      inv.soul.value_or(0) != worn.soul.value_or(0)) {
+    return -1;
+  }
+  int score = 0;
+  std::string invName = Lower(inv.name.value_or(""));
+  std::string wornName = Lower(worn.name.value_or(""));
+  if (invName == wornName) {
+    score += 4;
+  } else if (invName.empty()) {
+    score += 2;
+  }
+  if (inv.poisonId && inv.poisonId == worn.poisonId) {
+    score += 2;
+  }
+  if (inv.poisonId && inv.poisonCount.value_or(1) > 0) {
+    score += 1;
+  }
+  return score;
 }
 
 bool IsHealthDamage(uint32_t mgefId, WorldState* espmProvider)
@@ -348,14 +377,25 @@ int TemperTenths(const Inventory::ExtraData& e)
 
 const Inventory::Entry* FindWieldedCopy(const MpActor& actor, uint32_t baseId)
 {
+  // The client reports its whole inventory with worn flags: only what is
+  // worn counts, right hand first.
   const auto& inv = actor.GetInventory().entries;
-  for (auto& worn : actor.GetEquipment().inv.entries) {
-    if (worn.baseId != baseId) {
-      continue;
-    }
-    for (auto& e : inv) {
-      if (e.count > 0 && SameCopy(e, worn)) {
-        return &e;
+  for (auto hand : { Inventory::Worn::Right, Inventory::Worn::Left }) {
+    for (auto& worn : actor.GetEquipment().inv.entries) {
+      if (worn.baseId != baseId || worn.GetWorn() != hand) {
+        continue;
+      }
+      const Inventory::Entry* best = nullptr;
+      int bestScore = -1;
+      for (auto& e : inv) {
+        int score = e.count > 0 ? CopyScore(e, worn) : -1;
+        if (score > bestScore) {
+          best = &e;
+          bestScore = score;
+        }
+      }
+      if (best) {
+        return best;
       }
     }
   }
@@ -429,8 +469,11 @@ float OnHitMagicDamage(const Inventory::Entry* copy, WorldState* espmProvider)
   return damage;
 }
 
-void ConsumeOnHit(MpActor& aggressor, uint32_t baseId)
+void ConsumeOnHit(MpActor& aggressor, uint32_t baseId, bool blocked)
 {
+  if (blocked) {
+    return;
+  }
   const Inventory::Entry* copy = FindWieldedCopy(aggressor, baseId);
   if (!copy || (!copy->maxCharge && !copy->poisonId)) {
     return;
@@ -451,6 +494,8 @@ void ConsumeOnHit(MpActor& aggressor, uint32_t baseId)
         e.chargePercent.value_or(0) -
           IaForgeArmamentSettings::Get().enchantChargePerHit);
     }
+    // The poison is state, not identity: gone at its last dose, the copy
+    // stays the same one everywhere.
     if (e.poisonId) {
       uint32_t left = e.poisonCount.value_or(1);
       if (left <= 1) {

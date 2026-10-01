@@ -578,14 +578,19 @@ void ActionListener::OnDropItem(const RawMessageData& rawMsgData,
     auto tenths = [](std::optional<float> h) {
       return static_cast<int>(std::lround(std::max(h.value_or(1.f), 1.f) * 10));
     };
-    for (auto& e : ac->GetInventory().entries) {
-      if (e.baseId == baseId && e.count >= msg.count &&
-          tenths(e.health) == tenths(msg.health) &&
-          e.enchantmentId.value_or(0) == msg.enchantmentId.value_or(0) &&
-          e.poisonId.value_or(0) == msg.poisonId.value_or(0) &&
-          (!msg.name || e.name == msg.name)) {
-        chosen = &e;
-        break;
+    // The bag shows an unnamed copy under its base's name: an exact name
+    // first, then an unnamed copy.
+    for (int byName = 1; byName >= 0 && !chosen; --byName) {
+      for (auto& e : ac->GetInventory().entries) {
+        bool nameOk = !msg.name || e.name == msg.name ||
+          (!byName && e.name.value_or("").empty());
+        if (e.baseId == baseId && e.count >= msg.count &&
+            tenths(e.health) == tenths(msg.health) &&
+            e.enchantmentId.value_or(0) == msg.enchantmentId.value_or(0) &&
+            e.poisonId.value_or(0) == msg.poisonId.value_or(0) && nameOk) {
+          chosen = &e;
+          break;
+        }
       }
     }
   }
@@ -1474,7 +1479,8 @@ void ActionListener::OnWeaponHit(MpActor* aggressor,
     hitLog["magic"] = hitData.isHitBlocked
       ? 0.f
       : IaForgeArmament::OnHitMagicDamage(copy, &partOne.worldState);
-    IaForgeArmament::ConsumeOnHit(*aggressor, hitData.source);
+    IaForgeArmament::ConsumeOnHit(*aggressor, hitData.source,
+                                  hitData.isHitBlocked);
   }
   damage = damage < 0.f ? 0.f : damage;
   float outBaseHealth = 0.f;

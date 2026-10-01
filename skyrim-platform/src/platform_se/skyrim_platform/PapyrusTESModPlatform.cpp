@@ -653,6 +653,9 @@ bool IsCopy(RE::ExtraDataList* xl, float health, uint32_t enchId,
 }
 
 // The extra data list of the wanted copy; nullptr for a plain copy or none.
+// The poison is the copy's state (docs/91): the server may have spent it while
+// the game still holds it, so a copy with another poison is a fallback. An
+// unworn copy comes first (equipping the left hand must not take the right).
 RE::ExtraDataList* FindCopy(RE::TESObjectREFR* refr, RE::TESBoundObject* obj,
                             float health, uint32_t enchId,
                             const std::string& name, uint32_t poisonId)
@@ -661,15 +664,29 @@ RE::ExtraDataList* FindCopy(RE::TESObjectREFR* refr, RE::TESBoundObject* obj,
   if (!changes || !changes->changes || !changes->changes->entryList)
     return nullptr;
   const std::string baseName = obj->GetName() ? obj->GetName() : "";
+  RE::ExtraDataList* best = nullptr;
+  int bestScore = -1;
   for (auto entry : *changes->changes->entryList) {
     if (!entry || entry->object != obj || !entry->extraLists)
       continue;
     for (auto xl : *entry->extraLists) {
-      if (IsCopy(xl, health, enchId, name, poisonId, baseName))
-        return xl;
+      if (!xl)
+        continue;
+      uint32_t p = 0;
+      if (auto x = xl->GetByType<RE::ExtraPoison>())
+        p = x->poison ? x->poison->formID : 0;
+      if (!IsCopy(xl, health, enchId, name, p, baseName))
+        continue;
+      const bool worn = xl->HasType(RE::ExtraDataType::kWorn) ||
+        xl->HasType(RE::ExtraDataType::kWornLeft);
+      const int score = (p == poisonId ? 2 : 0) + (worn ? 0 : 1);
+      if (score > bestScore) {
+        best = xl;
+        bestScore = score;
+      }
     }
   }
-  return nullptr;
+  return best;
 }
 }
 
@@ -843,8 +860,6 @@ void TESModPlatform::AddItemEx(
   }
 
   const std::string copyName = textDisplayData.data();
-  const bool ownName = !copyName.empty() && boundObject->GetName() &&
-    _stricmp(copyName.c_str(), boundObject->GetName()) != 0;
   const uint32_t copyEnchId = enchantment ? enchantment->formID : 0;
   const uint32_t copyPoisonId = poison ? poison->formID : 0;
 
@@ -856,10 +871,11 @@ void TESModPlatform::AddItemEx(
       item->formType == RE::FormType::Ammo ? nullptr : extraList;
 
     // ia-forge (docs/91): the engine merges an added copy into a stack with the
-    // same extras but another name, so a named copy gets its own stack, and a
-    // removal takes the stack with that name.
+    // same extras but another name, and its RemoveItem takes any such stack,
+    // even the worn one: every copy with extra data gets its own stack, and a
+    // removal takes an unworn stack of that very copy.
     RE::InventoryEntryData* entry = nullptr;
-    if (ownName && optExtraList) {
+    if (optExtraList) {
       auto changes =
         containerRefr->extraList.GetByType<RE::ExtraContainerChanges>();
       if (changes && changes->changes && changes->changes->entryList) {

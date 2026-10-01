@@ -143,15 +143,17 @@ const extrasEqual = (a: Entry, b: Entry, ignoreWorn = false) => {
     //a.chargePercent === b.chargePercent &&
     nameKey(a) === nameKey(b) &&
     a.soul === b.soul &&
-    a.poisonId === b.poisonId &&
-    // ia-forge: doses drop on each hit on both sides, not always in step (docs/91).
+    // ia-forge: a poison and its doses are the copy's state, not its identity (docs/91): the server takes the poison
+    // off at the last dose and the game cannot do the same in place, so comparing it swapped (and unequipped) the
+    // weapon. The server counts the doses and the poison damage.
+    //a.poisonId === b.poisonId &&
     //a.poisonCount === b.poisonCount &&
     ((!!a.worn === !!b.worn && !!a.wornLeft === !!b.wornLeft) || ignoreWorn)
   );
 };
 
 export const hasExtras = (e: Entry): boolean => {
-  return !extrasEqual(e, { baseId: 0, count: 0 });
+  return !extrasEqual(e, { baseId: 0, count: 0 }) || !!e.poisonId;
 };
 
 const extractExtraData = (
@@ -394,7 +396,9 @@ export const applyInventory = (
   ignoreWorn = false
 ): boolean => {
   resetBase(refr);
-  const diff = getDiff(newInventory, getInventory(refr), ignoreWorn).entries;
+  // ia-forge: the server keeps copies that differ only by state (doses, charge) apart; one per identity here, or the
+  // diff took one -1 and the other +1 forever.
+  const diff = getDiff(squash(newInventory), getInventory(refr), ignoreWorn).entries;
   if (diff.length && refr.getFormID() === 0x14 && gmDebugOn("inventory")) traceGameCopies(refr, diff);
 
   let res = true;

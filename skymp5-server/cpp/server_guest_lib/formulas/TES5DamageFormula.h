@@ -46,8 +46,8 @@ namespace IaForgeArmament {
 // 1.600000023841858).
 int TemperTenths(const Inventory::ExtraData& e);
 
-// The copy of `baseId` the actor wields: the equipment the client reports,
-// trusted only if the server inventory holds such a copy.
+// The copy of `baseId` the actor wields: the worn entry the client reports,
+// matched to the server inventory copy that fits it best.
 const Inventory::Entry* FindWieldedCopy(const MpActor& actor,
                                         uint32_t baseId);
 
@@ -62,7 +62,8 @@ float HealthDamageOf(uint32_t enchOrAlchId, WorldState* espmProvider);
 float OnHitMagicDamage(const Inventory::Entry* copy,
                        WorldState* espmProvider);
 
-// After a hit landed: the enchantment loses charge, the poison a dose.
-void ConsumeOnHit(MpActor& aggressor, uint32_t baseId);
+// After a hit landed (not blocked): the enchantment loses charge, the poison
+// a dose.
+void ConsumeOnHit(MpActor& aggressor, uint32_t baseId, bool blocked);
 
 }
