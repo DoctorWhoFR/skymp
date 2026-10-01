@@ -184,13 +184,16 @@ export const applyWornOnly = (pc: Actor, serverInv: Inventory): void => {
     for (const w of worn.entries) {
       if (w.baseId === 0xf) continue;
       const g = game.find((e) => sameCopyAnyWorn(e, w));
-      if (!g || (w.wornLeft ? g.wornLeft : g.worn)) continue;
       const form = Game.getFormEx(w.baseId);
-      if (!form) continue;
+      if (!g || !form) continue;
+      // Clothes, shields and torches: the game picks the slot (a torch goes to the left hand, flagged so) and
+      // equipping one already on takes it off and puts it back: only when it is not on at all.
       if (Armor.from(form) || Light.from(form)) {
-        me.equipItemEx(form, 0, false, false);
+        // IsEquipped answers false for a torch held in the left hand: the game's own worn flags tell.
+        if (!g.worn && !g.wornLeft) me.equipItemEx(form, 0, false, false);
         continue;
       }
+      if (w.wornLeft ? g.wornLeft : g.worn) continue;
       // This very copy, in this hand: addItemEx with a count of 0 equips the copy with these extras (fork).
       TESModPlatform.pushWornState(!w.wornLeft, !!w.wornLeft);
       TESModPlatform.addItemEx(

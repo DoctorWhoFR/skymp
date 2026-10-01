@@ -644,7 +644,24 @@ void ActionListener::OnPlayerBowShot(const RawMessageData& rawMsgData,
       ac->GetFormId(), msg.ammoId);
   }
 
-  ac->RemoveItem(msg.ammoId, 1, nullptr);
+  // ia-forge (docs/97): the server marks the equipped arrows worn, so a plain
+  // removal found nothing and every shot was free. One arrow off the worn
+  // stack first, else off any stack of that ammo.
+  const Inventory::Entry* stack = nullptr;
+  for (auto& e : ac->GetInventory().entries) {
+    if (e.baseId != msg.ammoId || e.count == 0) {
+      continue;
+    }
+    if (!stack || e.GetWorn() != Inventory::Worn::None) {
+      stack = &e;
+    }
+  }
+  if (!stack) {
+    return;
+  }
+  Inventory::Entry one = *stack;
+  one.count = 1;
+  ac->RemoveItems({ one }, nullptr);
 }
 
 void ActionListener::OnFinishSpSnippet(const RawMessageData& rawMsgData,
