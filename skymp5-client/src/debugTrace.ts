@@ -7,7 +7,7 @@ import { storage } from "skyrimPlatform";
 import { MsgType } from "./messages";
 
 // Signature de version du client maison (lue par le gamemode : quel client tourne chez chaque joueur).
-export const CLIENT_BUILD = "ia-forge-local-32";
+export const CLIENT_BUILD = "ia-forge-local-34";
 try {
   storage["gmClientBuild"] = CLIENT_BUILD;
 } catch (e) {
@@ -15,7 +15,8 @@ try {
 }
 
 const MAX_QUEUE = 300;
-const ALWAYS = new Set(["erreur", "marque"]);
+// "login": one trace per spawn, sent before the gamemode can switch the debug mode on.
+const ALWAYS = new Set(["erreur", "marque", "login"]);
 
 /** La catégorie est-elle tracée en ce moment ? (pour éviter de construire des traces coûteuses) */
 export const gmDebugOn = (cat: string): boolean => {
