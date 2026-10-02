@@ -1,5 +1,5 @@
 import { Actor, ActorBase, createText, destroyText, Form, FormType, Game, Keyword, MagicEffect, NetImmerse, ObjectReference, once, printConsole, setTextPos, setTextSize, setTextString, storage, TESModPlatform, Utility, worldPointToScreenPoint } from "skyrimPlatform";
-import { setDefaultAnimsDisabled, applyAnimation, Animation } from "../sync/animation";
+import { setDefaultAnimsDisabled, applyAnimation, Animation, animTrace } from "../sync/animation";
 import { Appearance, applyAppearance } from "../sync/appearance";
 import { isBadMenuShown, applyEquipment } from "../sync/equipment";
 import { RespawnNeededError } from "../lib/errors";
@@ -147,11 +147,32 @@ export class FormView {
 
       // TODO: getLeveledBase crashes too often ATM
       let base = null; //Game.getFormEx(this.getLeveledBase(templateChain));
+      let baseFrom = "model";
       if (base === null) {
         base = Game.getFormEx(model.baseId || NaN);
       }
       if (base === null) {
+        baseFrom = "appearance";
         base = Game.getFormEx(this.getAppearanceBasedBase());
+      }
+      // ia-forge (2/10): after being raised, a player was born again on the base "Player" (0x7), which in every game
+      // is that game's own player: the viewer saw their own looks, and an NPC's voice lines. Never spawn another
+      // player on it: build the base from their appearance again, or wait for it.
+      if (base !== null && base.getFormID() === 0x7) {
+        const stale = this.appearanceBasedBaseId;
+        this.appearanceBasedBaseId = 0;
+        const rebuilt = this.appearanceState.appearance ? Game.getFormEx(this.getAppearanceBasedBase()) : null;
+        animTrace({
+          ev: "spawn-pc-base-refused",
+          srv: (this.remoteRefrId ?? 0).toString(16),
+          from: baseFrom,
+          modelBase: (model.baseId ?? 0).toString(16),
+          stale: stale.toString(16),
+          rebuilt: (rebuilt?.getFormID() ?? 0).toString(16),
+          looks: !!this.appearanceState.appearance,
+        }, "naissance");
+        base = rebuilt !== null && rebuilt.getFormID() !== 0x7 ? rebuilt : null;
+        baseFrom = "appearance-rebuilt";
       }
       if (base === null) {
         return;
@@ -219,6 +240,21 @@ export class FormView {
 
         if (model.movement) {
           refr = spawnMethod.spawn(base, model.movement.pos, model.movement.rot);
+          // ia-forge (2/10): a revived player was seen with the viewer's own looks; which base and looks were used.
+          const looks = this.appearanceState.appearance;
+          animTrace({
+            ev: "spawn-base",
+            srv: (this.remoteRefrId ?? 0).toString(16),
+            refr: (refr?.getFormID() ?? 0).toString(16),
+            from: baseFrom,
+            base: base.getFormID().toString(16),
+            baseType: base.getType(),
+            modelBase: (model.baseId ?? 0).toString(16),
+            stub: spawnUsingStubMethod,
+            looks: looks ? { name: looks.name, race: looks.raceId.toString(16), female: looks.isFemale } : null,
+            race: (Actor.from(refr)?.getRace()?.getFormID() ?? 0).toString(16),
+            dead: !!model.isDead,
+          }, "naissance");
         } else {
           printConsole("model.movement was " + model.movement);
         }
