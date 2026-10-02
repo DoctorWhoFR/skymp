@@ -1,6 +1,7 @@
 import { Actor, Game, storage, TESModPlatform } from "skyrimPlatform";
 import * as skyrimPlatform from "skyrimPlatform";
 import { remoteIdToLocalId } from "../view/worldViewMisc";
+import { NiPoint3 } from "./movement";
 import { gmDebugOn, gmTrace } from "../debugTrace";
 
 // ia-forge (mounts, docs/92 § 5): another player riding a horse. The gamemode keeps storage.gmMounts
@@ -146,13 +147,13 @@ const setProfile = (formId: number, profile: number) => {
  * Called by FormView for a remote actor at each update. Returns true when the actor is a rider held by the horse:
  * the caller must not translateTo it.
  */
-export const applyMountedRider = (rider: Actor, riderRemoteId: number | undefined): boolean => {
+export const applyMountedRider = (rider: Actor, riderRemoteId: number | undefined, truePos?: NiPoint3): boolean => {
   const horseRemote = horseOfRider(riderRemoteId);
   const riderLocal = rider.getFormID();
   const state = riders.get(riderLocal);
 
   if (!horseRemote) {
-    if (state) release(rider, state);
+    if (state) release(rider, state, truePos);
     return false;
   }
 
@@ -239,15 +240,29 @@ export const riderOnHorse = (horseLocal: number): Actor | null => {
   return found;
 };
 
-const release = (rider: Actor, s: RiderState) => {
+const release = (rider: Actor, s: RiderState, truePos?: NiPoint3) => {
   riders.delete(rider.getFormID());
   horseGaits.delete(s.horse);
+  let placed = false;
   if (s.method === 1) {
     if (rider.isOnMount()) rider.dismount();
   } else {
     spFn("releaseMountedPairKinematicTransform")?.(s.horse, rider.getFormID(), lease);
+    // Let go on the saddle, the clone slid down to its real place (Max, 2/10): it is put there at once, where the
+    // server says its player stands.
+    if (truePos) {
+      try {
+        TESModPlatform.moveRefrToPosition(
+          rider, rider.getParentCell(), rider.getWorldSpace(),
+          truePos[0], truePos[1], truePos[2], 0, 0, rider.getAngleZ(),
+        );
+        placed = true;
+      } catch (e) {
+        gmTrace("mount", `remote rider place after release failed: ${e}`);
+      }
+    }
   }
   setProfile(s.horse, PROFILE_NONE);
   setProfile(rider.getFormID(), PROFILE_NONE);
-  gmTrace("mount", "remote rider released", { rider: rider.getFormID().toString(16) });
+  gmTrace("mount", "remote rider released", { rider: rider.getFormID().toString(16), method: s.method, placed });
 };

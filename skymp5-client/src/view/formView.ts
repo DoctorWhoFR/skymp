@@ -443,7 +443,7 @@ export class FormView {
     if (model.movement) {
       let ac = Actor.from(refr);
       // ia-forge (mounts): every frame, not only when a movement arrives (the kinematic pair follows the horse).
-      const mounted = !!ac && !!model.isHostedByOther && applyMountedRider(ac, this.remoteRefrId);
+      const mounted = !!ac && !!model.isHostedByOther && applyMountedRider(ac, this.remoteRefrId, model.movement.pos);
       if (
         this.movState.lastApply &&
         Date.now() - this.movState.lastApply > 1500

@@ -5,6 +5,8 @@ const Router = require("koa-router");
 const auth = require("koa-basic-auth");
 import * as koaBody from "koa-body";
 import * as http from "http";
+import * as fs from "fs";
+import * as path from "path";
 import { Settings } from "./settings";
 import Axios from "axios";
 import { AddressInfo } from "net";
@@ -26,6 +28,51 @@ const metricsAuthParse = (settings: Settings): void => {
   }
   metricsAuth = { user: authConfig.user, password: authConfig.password };
 }
+
+// ia-forge: koa-static ignores Range, so a dropped launcher download restarted from zero on a shaky connection.
+const launcherFiles = async (ctx: any, next: any) => {
+  if (ctx.method !== "GET" || !ctx.path.startsWith("/launcher/")) return next();
+  const root = path.resolve("data");
+  let file: string;
+  try {
+    file = path.resolve(root, "." + decodeURIComponent(ctx.path));
+  } catch {
+    return next();
+  }
+  if (!file.startsWith(root + path.sep)) return next();
+  let st: fs.Stats;
+  try {
+    st = await fs.promises.stat(file);
+  } catch {
+    return next();
+  }
+  if (!st.isFile()) return next();
+  ctx.set("Accept-Ranges", "bytes");
+  ctx.set("Last-Modified", st.mtime.toUTCString());
+  ctx.type = path.extname(file);
+  let start = 0;
+  let end = st.size - 1;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(ctx.get("Range") || "");
+  if (m && (m[1] || m[2])) {
+    if (m[1]) {
+      start = Number(m[1]);
+      if (m[2]) end = Math.min(Number(m[2]), end);
+    } else {
+      start = Math.max(0, st.size - Number(m[2]));
+    }
+    if (start > end) {
+      ctx.status = 416;
+      ctx.set("Content-Range", `bytes */${st.size}`);
+      return;
+    }
+    ctx.status = 206;
+    ctx.set("Content-Range", `bytes ${start}-${end}/${st.size}`);
+  } else {
+    ctx.status = 200;
+  }
+  ctx.body = fs.createReadStream(file, { start, end });
+  ctx.length = end - start + 1;
+};
 
 const createApp = (getOriginPort: () => number) => {
   const app = new Koa();
@@ -87,6 +134,7 @@ const createApp = (getOriginPort: () => number) => {
   }
 
   app.use(router.routes()).use(router.allowedMethods());
+  app.use(launcherFiles);
   app.use(serve("data"));
   return app;
 };
