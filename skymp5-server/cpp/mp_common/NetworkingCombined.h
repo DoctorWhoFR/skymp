@@ -147,7 +147,14 @@ private:
         break;
       }
       case Networking::PacketType::ServerSideUserDisconnect:
-        id = combinedIdByReal[userId];
+        id = userId < combinedIdByReal.size() ? combinedIdByReal[userId]
+                                              : Networking::InvalidUserId;
+        // ia-forge (bots): a mock client closed by the server (kick) still
+        // reports its own disconnect when destroyed; freeing that id a second
+        // time called std::terminate.
+        if (id == Networking::InvalidUserId) {
+          return;
+        }
         this_->FreeId(id);
         combinedIdByReal[userId] = Networking::InvalidUserId;
         this_->realIdByCombined[id] = { -1, Networking::InvalidUserId };

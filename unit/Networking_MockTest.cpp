@@ -1,6 +1,8 @@
 #include "NetworkingMock.h"
 #include <catch2/catch_all.hpp>
 #include <cstring>
+#include <string>
+#include <vector>
 
 using namespace Networking;
 
@@ -105,4 +107,31 @@ TEST_CASE("MockServer - connect/disconnect", "[Networking]")
       nullptr);
     REQUIRE(serverTicked);
   }
+}
+
+TEST_CASE("MockServer - a packet whose handling throws is not handled again",
+          "[Networking]")
+{
+  MockServer mockServer;
+  auto cl = mockServer.CreateClient().first;
+  cl->Send((uint8_t*)"bad!", 4, true);
+  cl->Send((uint8_t*)"good", 4, true);
+
+  REQUIRE_THROWS(mockServer.Tick(
+    [](void*, UserId, PacketType packetType, PacketData data, size_t length) {
+      if (packetType == PacketType::Message) {
+        throw std::runtime_error("bad packet");
+      }
+    },
+    nullptr));
+
+  static std::vector<std::string> handled;
+  mockServer.Tick(
+    [](void*, UserId, PacketType packetType, PacketData data, size_t length) {
+      handled.push_back(packetType == PacketType::Message
+                          ? std::string((const char*)data, length)
+                          : "other");
+    },
+    nullptr);
+  REQUIRE(handled == std::vector<std::string>({ "good" }));
 }

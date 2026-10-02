@@ -1,6 +1,7 @@
 #include "NetworkingMock.h"
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -150,12 +151,33 @@ void Networking::MockServer::Send(UserId targetUserId, PacketData data,
 
 void Networking::MockServer::Tick(OnPacket onPacket, void* state)
 {
-  for (auto& pair : pImpl->packets) {
+  // ia-forge (bots): taken out of the queue before they are handled. A packet
+  // whose handling threw stayed queued and ScampServer::Tick, which retries
+  // until a tick ends without exception, handled it again forever (server
+  // frozen). Now only that packet is dropped: the ones after it go back to the
+  // front of the queue. A client sending from inside a handler no longer
+  // pushes into the vector being walked either.
+  auto packets = std::move(pImpl->packets);
+  pImpl->packets.clear();
+  size_t next = 0;
+  struct Requeue
+  {
+    decltype(packets)& from;
+    decltype(packets)& to;
+    const size_t& next;
+    ~Requeue()
+    {
+      to.insert(to.begin(), std::make_move_iterator(from.begin() + next),
+                std::make_move_iterator(from.end()));
+    }
+  } requeue{ packets, pImpl->packets, next };
+
+  while (next < packets.size()) {
+    auto& pair = packets[next++];
     auto& p = pair.second;
     onPacket(state, pair.first, p->type,
              p->data.empty() ? nullptr : &p->data[0], p->data.size());
   }
-  pImpl->packets.clear();
 }
 
 std::string Networking::MockServer::GetIp(UserId userId) const

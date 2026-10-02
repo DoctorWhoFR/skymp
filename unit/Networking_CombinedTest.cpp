@@ -127,3 +127,30 @@ TEST_CASE("Combined: Messages are transferred to clients")
     nullptr);
   REQUIRE(received);
 }
+
+TEST_CASE("Combined: a client closed by the server, then destroyed, "
+          "disconnects once",
+          "[Networking]")
+{
+  auto s1 = std::make_shared<MockServer>();
+  auto s2 = std::make_shared<MockServer>();
+  auto svr = CreateCombinedServer({ s1, s2 });
+
+  DECLARE_CB;
+
+  auto cl = s2->CreateClient().first;
+  svr->Tick(tickCb, nullptr);
+  REQUIRE(connected == std::vector<UserId>({ 1 }));
+
+  svr->CloseConnection(1);
+  svr->Tick(tickCb, nullptr);
+  REQUIRE(disconnected == std::vector<UserId>({ 1 }));
+
+  cl.reset();
+  svr->Tick(tickCb, nullptr);
+  REQUIRE(disconnected == std::vector<UserId>({ 1 }));
+
+  auto again = s1->CreateClient().first;
+  svr->Tick(tickCb, nullptr);
+  REQUIRE(connected == std::vector<UserId>({ 1, 1 }));
+}

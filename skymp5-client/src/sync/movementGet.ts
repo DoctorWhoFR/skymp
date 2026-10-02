@@ -36,15 +36,23 @@ class PlayerCharacterSpeedCalculator {
 // was sent as "Standing" while galloping and slid without moving its legs in every other game. Its gait comes from
 // how far it really went since the last send.
 let lastGaitTrace = 0;
-const riddenLast = new Map<number, { x: number; y: number; at: number }>();
+const riddenLast = new Map<number, { x: number; y: number; at: number; sprint: boolean }>();
+// A real gallop measures 585-600 u/s on the horse's own graph (BUG-048, 2/10): the old 650 threshold never sent
+// "Sprinting", so the others only ever saw a trot. Hysteresis so that the gait does not flicker on a bump.
+const GALLOP_START = 530;
+const GALLOP_STOP = 480;
 const riddenGait = (refr: ObjectReference, pos: NiPoint3): { runMode: RunMode; speed: number } => {
   const id = refr.getFormID();
   const now = Date.now();
   const prev = riddenLast.get(id);
-  riddenLast.set(id, { x: pos[0], y: pos[1], at: now });
-  if (!prev || now - prev.at <= 0 || now - prev.at > 2000) return { runMode: "Standing", speed: 0 };
+  if (!prev || now - prev.at <= 0 || now - prev.at > 2000) {
+    riddenLast.set(id, { x: pos[0], y: pos[1], at: now, sprint: false });
+    return { runMode: "Standing", speed: 0 };
+  }
   const speed = Math.sqrt((pos[0] - prev.x) ** 2 + (pos[1] - prev.y) ** 2) / ((now - prev.at) / 1000);
-  const runMode: RunMode = speed < 40 ? "Standing" : speed < 250 ? "Walking" : speed < 650 ? "Running" : "Sprinting";
+  const sprint = prev.sprint ? speed >= GALLOP_STOP : speed >= GALLOP_START;
+  riddenLast.set(id, { x: pos[0], y: pos[1], at: now, sprint });
+  const runMode: RunMode = speed < 40 ? "Standing" : speed < 250 ? "Walking" : sprint ? "Sprinting" : "Running";
   if (gmDebugOn("mount") && now - lastGaitTrace > 1000) {
     lastGaitTrace = now;
     gmTrace("mount", "ridden horse gait", { horse: id.toString(16), runMode, speed: Math.round(speed) });

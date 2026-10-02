@@ -16,6 +16,7 @@ export class SpawnProcess {
     private callback: () => void,
     worldOrCell = 0,
     rot: NiPoint3 = [0, 0, 0],
+    private onEnabled?: () => void,
   ) {
     this.pos = [pos[0], pos[1], pos[2]];
     this.worldOrCell = worldOrCell;
@@ -67,6 +68,11 @@ export class SpawnProcess {
       applyTints(ac, appearance);
     }
     refr.enable(false).then(() => {
+      try {
+        this.onEnabled?.();
+      } catch (e) {
+        animTrace({ ev: "spawn-enabled-hook-error", refr: refrId.toString(16), error: String(e) }, "naissance");
+      }
       this.fixPosition(refrId, "spawn-enabled");
       this.resurrect(refrId);
     });

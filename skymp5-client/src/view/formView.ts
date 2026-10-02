@@ -1,11 +1,11 @@
 import { Actor, ActorBase, createText, destroyText, Form, FormType, Game, Keyword, MagicEffect, NetImmerse, ObjectReference, once, printConsole, setTextPos, setTextSize, setTextString, storage, TESModPlatform, Utility, worldPointToScreenPoint } from "skyrimPlatform";
-import { setDefaultAnimsDisabled, applyAnimation } from "../sync/animation";
+import { setDefaultAnimsDisabled, applyAnimation, Animation } from "../sync/animation";
 import { Appearance, applyAppearance } from "../sync/appearance";
 import { isBadMenuShown, applyEquipment } from "../sync/equipment";
 import { RespawnNeededError } from "../lib/errors";
 import { FormModel } from "./model";
 import { applyMovement } from "../sync/movementApply";
-import { applyMountedRider } from "../sync/mountedRider";
+import { applyMountedRider, forgetMountedRider, hideRiderAtBirth, revealIfHidden, riderAnimBlocked } from "../sync/mountedRider";
 import { SpawnProcess } from "./spawnProcess";
 import { ObjectReferenceEx } from "../extensions/objectReferenceEx";
 import { PlayerCharacterDataHolder } from "./playerCharacterDataHolder";
@@ -35,6 +35,10 @@ export const getScreenResolution = (): ScreenResolution => {
   }
   return _screenResolution;
 }
+
+// Traces of echoed animations dropped on hosted actors: at most one per period and category (the others are counted).
+const ECHO_TRACE_MS: Record<string, number> = { mount: 200, anim: 2000 };
+const echoTrace: Record<string, { at: number; untraced: number }> = {};
 
 export class FormView {
   constructor(private remoteRefrId?: number) { }
@@ -168,6 +172,7 @@ export class FormView {
         this.destroy();
 
         const player = Game.getPlayer() as Actor;
+        const remoteRefrId = this.remoteRefrId;
 
         const spawnMethodOriginal = {
           spawn(baseForm: Form, _spawnPosition: [number, number, number], _spawnRotation: [number, number, number]): ObjectReference {
@@ -187,6 +192,8 @@ export class FormView {
               callback,
               model.movement ? model.movement.worldOrCell : 0,
               model.movement ? model.movement.rot : [0, 0, 0],
+              // ia-forge (mounts): a rider glued to its horse (method 3) is born out of sight until seated.
+              () => hideRiderAtBirth(spawningRefr.getFormID(), remoteRefrId),
             );
           }
         };
@@ -320,6 +327,7 @@ export class FormView {
     this.isOnScreen = false;
     this.spawnMoment = 0;
     const refrId = this.refrId;
+    forgetMountedRider(refrId);
     once("update", () => {
       if (refrId >= 0xff000000) {
         const refr = ObjectReference.from(Game.getFormEx(refrId));
@@ -443,7 +451,8 @@ export class FormView {
     if (model.movement) {
       let ac = Actor.from(refr);
       // ia-forge (mounts): every frame, not only when a movement arrives (the kinematic pair follows the horse).
-      const mounted = !!ac && !!model.isHostedByOther && applyMountedRider(ac, this.remoteRefrId, model.movement.pos);
+      const mounted = !!ac && !!model.isHostedByOther && applyMountedRider(ac, this.remoteRefrId, model.movement.pos, this.spawnMoment);
+      if (ac && !model.isHostedByOther) revealIfHidden(ac);
       if (
         this.movState.lastApply &&
         Date.now() - this.movState.lastApply > 1500
@@ -522,9 +531,21 @@ export class FormView {
       }
     }
 
+    if (model.animation && alreadyHosted) {
+      this.dropEchoedAnimation(refr, model.animation);
+    }
     if (refr.is3DLoaded()) {
-      if (model.animation) {
-        applyAnimation(refr, model.animation, this.animState);
+      if (model.animation && !alreadyHosted) {
+        // ia-forge (mounts): a rider held on its horse by method 3 does not replay its own (un)mounting, jumps or
+        // locomotion (sync/mountedRider.ts). The event is consumed so that it is not played after the release either.
+        if (
+          model.animation.numChanges !== this.animState.lastNumChanges &&
+          riderAnimBlocked(this.refrId, this.remoteRefrId, model.animation.animEventName)
+        ) {
+          this.animState.lastNumChanges = model.animation.numChanges;
+        } else {
+          applyAnimation(refr, model.animation, this.animState);
+        }
       }
       // Use them only once, for spawning actors with correct animations
       this.animState.useAnimOverrides = false;
@@ -644,6 +665,40 @@ export class FormView {
     } else {
       this.removeNickname();
     }
+  }
+
+  // ia-forge (BUG-048, 2/10 17:14:27 UTC): the server sends a hoster its own UpdateAnimation back
+  // (ActionListener::SendToNeighbours: every listener of the actor, the sender included). On an actor this game hosts,
+  // the event already played here, and it was replayed on the horse we ride (standingRearUp, 70 ms after the engine's
+  // own). Marked as seen, so that it is not replayed either when another game takes the actor over. Our own
+  // character never comes here (no view for it, formViewArray.ts).
+  private dropEchoedAnimation(refr: ObjectReference, anim: Animation) {
+    if (anim.numChanges === this.animState.lastNumChanges) {
+      return;
+    }
+    this.animState.lastNumChanges = anim.numChanges;
+    recordAction("animEcho", refr, { ev: anim.animEventName });
+    if (!gmDebugOn("mount") && !gmDebugOn("anim")) {
+      return;
+    }
+    const ridden = !!Actor.from(refr)?.isBeingRidden();
+    const cat = ridden ? "mount" : "anim";
+    const s = echoTrace[cat] || (echoTrace[cat] = { at: 0, untraced: 0 });
+    const now = Date.now();
+    if (now - s.at < ECHO_TRACE_MS[cat]) {
+      s.untraced++;
+      return;
+    }
+    gmTrace(cat, "echoed animation dropped (hosted here)", {
+      refr: refr.getFormID().toString(16),
+      srv: (this.remoteRefrId ?? 0).toString(16),
+      ev: anim.animEventName,
+      n: anim.numChanges,
+      ridden,
+      untraced: s.untraced,
+    });
+    s.at = now;
+    s.untraced = 0;
   }
 
   private isSweetHidePerson(refr: ObjectReference): boolean {

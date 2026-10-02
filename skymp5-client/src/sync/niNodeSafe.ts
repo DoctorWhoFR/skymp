@@ -1,5 +1,6 @@
 import { Actor, Game } from "skyrimPlatform";
 import { gmTrace } from "../debugTrace";
+import { riderNiNodeUpdateNow } from "./mountedRider";
 
 // ia-forge (BUG-048, 1er/10): QueueNiNodeUpdate (DoReset3D) on a mounted actor breaks its physics: horse and rider
 // thrown about violently until they dismount (Papyrus documentation; BStarRP's "flying horses" fix does the same).
@@ -25,6 +26,10 @@ export const queueNiNodeUpdateSafe = (ac: Actor, why: string): boolean => {
   }
   if (ac.isOnMount()) {
     gmTrace("mount", "queueNiNodeUpdate skipped (rider seated)", { refr: id.toString(16), why });
+    return false;
+  }
+  if (!riderNiNodeUpdateNow(id)) {
+    gmTrace("mount", "queueNiNodeUpdate deferred (rider glued)", { refr: id.toString(16), why });
     return false;
   }
   ac.queueNiNodeUpdate();

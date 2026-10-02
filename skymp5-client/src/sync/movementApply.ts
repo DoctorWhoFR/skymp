@@ -9,7 +9,7 @@ import { RespawnNeededError } from "../lib/errors";
 import { Movement, RunMode, AnimationVariables, Transform, NiPoint3 } from "./movement";
 import { ObjectReferenceEx } from "../extensions/objectReferenceEx";
 import { SpApiInteractor } from "../services/spApiInteractor";
-import { animStyle, riderOnHorse, setRiddenHorseGait } from "./mountedRider";
+import { animStyle, isGraphDrivenRider, isKinematicRider, riderOnHorse, setRiddenHorseGait } from "./mountedRider";
 import { gmDebugOn, gmTrace } from "../debugTrace";
 import { recordAction } from "./rideWatch";
 
@@ -65,11 +65,11 @@ export const applyMovement = (refr: ObjectReference, m: Movement, isMyClone?: bo
   // ia-forge (mounts, 1er/10): a horse ridden by a remote rider in our game slid without moving its legs: its
   // walking intent goes to the rider, who drives it.
   const driver = mounted ? null : riderOnHorse(ac.getFormID());
+  const style = driver || mounted ? animStyle() : 0;
   if (driver) {
     // The horse's graph is driven from the received gait (mountedRider.ts); the seated rider keeps its walking
     // intent too (local-44 removed it and the remote horse stopped animating; local-43 validated by Max, 1er/10).
-    setRiddenHorseGait(ac.getFormID(), m.speed || 0, m.runMode);
-    const style = animStyle();
+    setRiddenHorseGait(ac.getFormID(), m.speed || 0, m.runMode, m.rot[2], m.pos);
     if (style === 1 || style === 3) keepOffsetFromActor(driver, m);
     if (gmDebugOn("mount") && Date.now() - lastDriverTrace > 1000) {
       lastDriverTrace = Date.now();
@@ -77,13 +77,21 @@ export const applyMovement = (refr: ObjectReference, m: Movement, isMyClone?: bo
         horse: ac.getFormID().toString(16),
         rider: driver.getFormID().toString(16),
         runMode: m.runMode,
+        style,
       });
     }
   } else if (!mounted) keepOffsetFromActor(ac, m);
 
-  applySprinting(ac, m.runMode === "Sprinting");
-  applyBlocking(ac, m);
-  applySneaking(ac, m.isSneaking);
+  // ia-forge (mounts): a rider glued to its horse (method 3) gets its gait from the pose technique only; sprint,
+  // block and sneak events from its on-foot movement would fight the riding state (BStarRP skips them too).
+  // Style 5 (method 1): the gallop of a ridden pair comes from the horse's gait, for both graphs (mountedRider.ts).
+  const glued = !!mounted && isKinematicRider(ac.getFormID());
+  const sprintByPair = style === 5 && (!!driver || (!!mounted && isGraphDrivenRider(ac)));
+  if (!glued && !sprintByPair) applySprinting(ac, m.runMode === "Sprinting");
+  if (!glued) {
+    applyBlocking(ac, m);
+    applySneaking(ac, m.isSneaking);
+  }
   applyWeapDrawn(ac, m.isWeapDrawn);
   applyHealthPercentage(ac, m.healthPercentage);
 
